@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "target": "ES2016",
+
+    /* modules */
+    "useDefineForClassFields": true,
+    "isolatedModules": true,
+    "module": "NodeNext",
+    "allowImportingTsExtensions": false,
+    "moduleResolution": "nodenext",
+    "resolveJsonModule": true,
+
+    /* type checking */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["node"],
+    "esModuleInterop": true,
+    "noEmit": false
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}

@@ -18,6 +18,7 @@ memberRouter.get("/member", (_req, res) => __awaiter(void 0, void 0, void 0, fun
         const rawData = yield db
             .select({
             memberId: members.id,
+            userId: members.userId,
             name: members.name,
             username: members.username,
             roleId: roles.id,
@@ -58,6 +59,7 @@ memberRouter.get("/member", (_req, res) => __awaiter(void 0, void 0, void 0, fun
                     id: row.memberId,
                     name: row.name,
                     username: row.username,
+                    userId: row.userId,
                     createdAt: row.createdAt,
                     role: {
                         id: row.roleId,
@@ -115,6 +117,7 @@ memberRouter.get("/member/:username", (req, res) => __awaiter(void 0, void 0, vo
             memberId: members.id,
             name: members.name,
             username: members.username,
+            userId: members.userId,
             roleId: roles.id,
             roleName: roles.name,
             description: members.description,
@@ -151,6 +154,7 @@ memberRouter.get("/member/:username", (req, res) => __awaiter(void 0, void 0, vo
             id: rawData[0].memberId,
             name: rawData[0].name,
             username: rawData[0].username,
+            userId: rawData[0].userId,
             createdAt: rawData[0].createdAt,
             role: {
                 id: rawData[0].roleId,

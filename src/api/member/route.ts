@@ -22,6 +22,7 @@ memberRouter.get("/member", async (_req: Request, res: Response) => {
     const rawData = await db
       .select({
         memberId: members.id,
+        userId: members.userId,
         name: members.name,
         username: members.username,
         roleId: roles.id,
@@ -65,6 +66,7 @@ memberRouter.get("/member", async (_req: Request, res: Response) => {
           id: row.memberId,
           name: row.name,
           username: row.username,
+          userId: row.userId,
           createdAt: row.createdAt,
           role: {
             id: row.roleId,
@@ -128,6 +130,7 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
         memberId: members.id,
         name: members.name,
         username: members.username,
+        userId: members.userId,
         roleId: roles.id,
         roleName: roles.name,
         description: members.description,
@@ -166,6 +169,7 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
       id: rawData[0].memberId,
       name: rawData[0].name,
       username: rawData[0].username,
+      userId: rawData[0].userId,
       createdAt: rawData[0].createdAt,
       role: {
         id: rawData[0].roleId,

@@ -28,6 +28,7 @@ interface Member {
   id: number;
   name: string;
   username: string;
+  userId: string;
   role: RoleEntry | null;
   description: string | null;
   images: ImageMemberEntry | null;

@@ -2,8 +2,8 @@ import express from "express";
 import type { Request, Response } from "express";
 
 import { db } from "../../db/index.js";
-import { users, sessions, moderators, members } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { users, sessions, roles, bans } from "../../db/schema.js";
+import { eq, and } from "drizzle-orm";
 import checkAuth from "../../middleware/checkAuth.js";
 
 export const userRouter = express.Router();
@@ -30,27 +30,50 @@ userRouter.get("/user", checkAuth, async (req: Request, res: Response) => {
     }
 
     const userId = session[0].userId;
-    const userFromDB = await db
-      .select()
+
+    // Obtener usuario y rol asociado
+    const user = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        username: users.username,
+        email: users.email,
+        image: users.image,
+        banner: users.banner,
+        bannerColor: users.bannerColor,
+        createdAt: users.createdAt,
+        updatedAt: users.updatedAt,
+        role: {
+          id: roles.id,
+          name: roles.name,
+        },
+      })
       .from(users)
+      .leftJoin(roles, eq(users.roleId, roles.id))
       .where(eq(users.id, userId as string))
       .limit(1);
 
-    if (userFromDB.length === 0) {
-      res.status(401).send("User not found");
+    if (user.length === 0) {
+      res.status(404).send("User not found");
       return;
     }
 
-    const user = userFromDB[0];
+    // Verificar si el usuario está baneado
+    const isBanned = await db
+      .select()
+      .from(bans)
+      .where(eq(bans.userId, userId as string))
+      .limit(1);
 
-    if (user.banned === 1) {
+    if (isBanned.length > 0) {
       res.status(403).send("You are banned");
-    } else {
-      res.status(200).json(user);
+      return;
     }
+
+    res.status(200).json(user[0]);
   } catch (err) {
-    console.error("Error fetching session:", err);
-    res.status(500).send("Error occurred while fetching session");
+    console.error("Error fetching user:", err);
+    res.status(500).send("Error occurred while fetching user");
   }
 });
 
@@ -83,11 +106,16 @@ userRouter.post("/user/:username/block", checkAuth, async (req, res) => {
 
     const authUserId = session[0].userId;
 
+    if (!authUserId) {
+      res.status(401).send("Debes iniciar sesión para realizar esta acción");
+      return;
+    }
     // Verificar si el usuario autenticado es moderador
     const isModerator = await db
       .select()
-      .from(moderators)
-      .where(eq(moderators.userId, authUserId as string)) // Ahora referencia users.id
+      .from(roles)
+      .innerJoin(users, eq(users.roleId, roles.id))
+      .where(and(eq(users.id, authUserId), eq(roles.name, "Moderador")))
       .limit(1);
 
     if (!isModerator.length) {
@@ -109,18 +137,25 @@ userRouter.post("/user/:username/block", checkAuth, async (req, res) => {
 
     const userIdToBlock = userToBlock[0].id;
 
-    // Bloquear al usuario
-    await db.transaction(async (tx) => {
-      await tx
-        .update(users)
-        .set({ writeAccess: 0 })
-        .where(eq(users.id, userIdToBlock));
-    
-      await tx
-        .update(members)
-        .set({ hidden: 1 })
-        .where(eq(members.username, username));
-    });
+    // Verificar si el rol "Bloqueado" existe
+    const blockedRole = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(eq(roles.name, "Bloqueado"))
+      .limit(1);
+
+    if (!blockedRole.length) {
+      res.status(500).send("El rol 'Bloqueado' no existe en la base de datos");
+      return;
+    }
+
+    const blockedRoleId = blockedRole[0].id;
+
+    // Asignar el rol "Bloqueado" al usuario
+    await db
+      .update(users)
+      .set({ roleId: blockedRoleId })
+      .where(eq(users.id, userIdToBlock));
 
     res.status(200).send("Usuario bloqueado correctamente");
   } catch (err) {
@@ -128,8 +163,6 @@ userRouter.post("/user/:username/block", checkAuth, async (req, res) => {
     res.status(500).send("Error interno del servidor");
   }
 });
-
-
 
 userRouter.post("/user/:username/unblock", checkAuth, async (req, res) => {
   try {
@@ -160,11 +193,17 @@ userRouter.post("/user/:username/unblock", checkAuth, async (req, res) => {
 
     const authUserId = session[0].userId;
 
+    if (!authUserId) {
+      res.status(401).send("Debes iniciar sesión para realizar esta acción");
+      return;
+    }
+
     // Verificar si el usuario autenticado es moderador
     const isModerator = await db
       .select()
-      .from(moderators)
-      .where(eq(moderators.userId, authUserId as string))
+      .from(roles)
+      .innerJoin(users, eq(users.roleId, roles.id))
+      .where(and(eq(users.id, authUserId), eq(roles.name, "Moderador")))
       .limit(1);
 
     if (!isModerator.length) {
@@ -186,18 +225,25 @@ userRouter.post("/user/:username/unblock", checkAuth, async (req, res) => {
 
     const userIdToUnblock = userToUnblock[0].id;
 
-    // Desbloquear al usuario
-    await db.transaction(async (tx) => {
-      await tx
-        .update(users)
-        .set({ writeAccess: 1 })
-        .where(eq(users.id, userIdToUnblock));
-    
-      await tx
-        .update(members)
-        .set({ hidden: 0 })
-        .where(eq(members.username, username));
-    });
+    // Verificar si el rol "Miembro" existe
+    const memberRole = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(eq(roles.name, "Miembro"))
+      .limit(1);
+
+    if (!memberRole.length) {
+      res.status(500).send("El rol 'Miembro' no existe en la base de datos");
+      return;
+    }
+
+    const memberRoleId = memberRole[0].id;
+
+    // Asignar el rol "Miembro" al usuario
+    await db
+      .update(users)
+      .set({ roleId: memberRoleId })
+      .where(eq(users.id, userIdToUnblock));
 
     res.status(200).send("Usuario desbloqueado correctamente");
   } catch (err) {

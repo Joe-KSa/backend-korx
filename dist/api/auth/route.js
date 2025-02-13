@@ -13,8 +13,8 @@ import { v4 as uuidv4 } from "uuid";
 config({ path: "private/.env" });
 export const authRouter = express.Router();
 import { db } from "../../db/index.js";
-import { users, accounts, roles, members, sessions } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { users, accounts, roles, members, sessions, bans, images, memberImages, sounds, memberSounds, } from "../../db/schema.js";
+import { eq, asc } from "drizzle-orm";
 import { generateToken } from "../../libs/generateToken.js";
 import checkAuth from "../../middleware/checkAuth.js";
 import { redisClient } from "../../config/redis.config.js";
@@ -76,17 +76,31 @@ authRouter.get("/auth/discord/callback", (req, res) => __awaiter(void 0, void 0,
         const userData = yield userResponse.json();
         const { id, global_name, username, email, avatar, banner, banner_color } = userData;
         // 4. Verificación de baneo
+        const bannerUser = yield db
+            .select()
+            .from(bans)
+            .where(eq(bans.userId, id));
+        if (bannerUser.length > 0) {
+            res.status(403).json({ error: "Cuenta baneada" });
+            return;
+        }
+        // 5. Actualización de usuario
         const existingUser = yield db
             .select()
             .from(users)
             .where(eq(users.id, id))
             .limit(1);
+        // Rol por defecto
+        const [defaultRole] = yield db
+            .select()
+            .from(roles)
+            .where(eq(roles.name, "Miembro"))
+            .limit(1);
+        if (!defaultRole) {
+            res.status(500).send("Error de configuración de roles");
+            return;
+        }
         if (existingUser.length > 0) {
-            if (existingUser[0].banned === 1) {
-                res.status(403).json({ error: "Cuenta baneada" });
-                return;
-            }
-            // 5. Actualización de usuario
             const [currentUser] = existingUser;
             const updates = {};
             if (currentUser.username !== username)
@@ -113,6 +127,7 @@ authRouter.get("/auth/discord/callback", (req, res) => __awaiter(void 0, void 0,
                     ? `https://cdn.discordapp.com/banners/${id}/${banner}.png`
                     : null,
                 bannerColor: banner_color || null,
+                roleId: defaultRole.id,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
             });
@@ -137,13 +152,13 @@ authRouter.get("/auth/discord/callback", (req, res) => __awaiter(void 0, void 0,
             .select()
             .from(sessions)
             .where(eq(sessions.userId, id))
-            .orderBy(sessions.createdAt) // Ordenar por fecha de creación (las más antiguas primero)
+            .orderBy(asc(sessions.createdAt)) // Ordenar por fecha de creación (las más antiguas primero)
             .limit(maxSessions);
         if (userSessions.length >= maxSessions) {
             yield db
                 .delete(sessions)
                 .where(eq(sessions.userId, id))
-                .orderBy(sessions.createdAt)
+                .orderBy(asc(sessions.createdAt))
                 .limit(1);
         }
         // Insertar la nueva sesión
@@ -161,25 +176,60 @@ authRouter.get("/auth/discord/callback", (req, res) => __awaiter(void 0, void 0,
             .where(eq(members.username, username))
             .limit(1);
         if (!existingMember.length) {
-            const [defaultRole] = yield db
-                .select()
-                .from(roles)
-                .where(eq(roles.name, "Miembro"))
-                .limit(1);
-            if (!defaultRole) {
-                res.status(500).send("Error de configuración de roles");
-                return;
-            }
-            yield db.insert(members).values({
-                name: global_name,
-                username,
+            const [newMember] = yield db
+                .insert(members)
+                .values({
+                userId: id,
+                name: global_name || "",
+                username: username || "",
                 roleId: defaultRole.id,
-                image: avatar
-                    ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png`
-                    : null,
+                description: "",
+                hidden: false,
+                github: "",
+                phrase: "",
+                primaryColor: "",
+                secondaryColor: "",
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-            });
+            })
+                .returning({ id: members.id });
+            if (newMember) {
+                if (avatar) {
+                    const imageUrl = `https://cdn.discordapp.com/avatars/${id}/${avatar}.png`;
+                    const [newImage] = yield db
+                        .insert(images)
+                        .values({ url: imageUrl, publicId: "" })
+                        .returning({ id: images.id });
+                    yield db.insert(memberImages).values({
+                        memberId: newMember.id,
+                        imageId: newImage.id,
+                        type: "avatar",
+                    });
+                }
+                if (banner) {
+                    const bannerUrl = `https://cdn.discordapp.com/banners/${id}/${banner}.png`;
+                    const [newBanner] = yield db
+                        .insert(images)
+                        .values({ url: bannerUrl, publicId: "" })
+                        .returning({ id: images.id });
+                    yield db.insert(memberImages).values({
+                        memberId: newMember.id,
+                        imageId: newBanner.id,
+                        type: "banner",
+                    });
+                }
+            }
+            // Crear un sonido vacío y obtener su ID
+            const [newSound] = yield db
+                .insert(sounds)
+                .values({ url: "", path: "" })
+                .returning({ id: sounds.id });
+            if (newSound) {
+                yield db.insert(memberSounds).values({
+                    memberId: newMember.id,
+                    soundId: newSound.id,
+                });
+            }
         }
         // 8. Generación de tokens
         const accessTokenJWT = generateToken(id, username, email);

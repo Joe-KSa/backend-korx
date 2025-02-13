@@ -1,53 +1,100 @@
-export interface projectEntry {
+// Database
+export interface Image {
+  id: number | null;
+  url: string | null;
+  publicId: string | null;
+  type: string | null;
+}
+
+export interface Sound {
+  id: number | null;
+  url: string | null;
+  path: string | null;
+  type: string | null;
+}
+
+interface Role {
+  id: number;
+  name: string;
+}
+
+export interface Tag {
+  id: number | null;
+  name: string | null;
+}
+
+// Member
+interface Member {
+  id: number;
+  name: string;
+  username: string;
+  role: RoleEntry | null;
+  description: string | null;
+  images: ImageMemberEntry | null;
+  sound: Omit<Sound, "id"> | null;
+  tags: Tag[];
+  github: string | null;
+  phrase: string | null;
+  primaryColor: string | null;
+  secondaryColor: string | null;
+  hidden: boolean;
+  createdAt: string;
+}
+
+
+export interface TagMemberEntry extends Tag {
+  memberId: number | null;
+}
+
+export interface ImageMemberEntry {
+  avatar: Pick<Image, 'url' | 'publicId'>
+  banner: Pick<Image, 'url' | 'publicId'>
+}
+
+export interface SoundMemberEntry extends sound {
+  memberId: number;
+}
+
+
+// User
+export interface User {
+  id: number;
+  name: string;
+  username: string;
+  email: string;
+  image: string;
+  banner: string;
+  bannerColor: string
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Project
+export interface project {
   id: number;
   title: string;
   description: string | null;
   repository: string | null;
   url: string | null;
-  image: string | null;
-  publicId: string;
-  creator: Pick<emberEntry, "id", "name", "username", "iamge">;
+  hidden: boolean;
+  createdAt: string
+  updateAt: string;
+  tags: Tag[];
+  creator: Pick<User, 'id', 'name', 'username', 'image'>;
 }
 
-export interface projectMemberEntry {
+export type ProjectEntry = Omit<Project, 'createdAt', 'updatedAt'>
+
+export interface ProjectMemberEntry {
   id: number;
   name: string;
   projectId: number | null;
 }
 
-interface memberEntry {
-  id: number;
-  name: string;
-  username: string;
-  role: roleEntry | null;
-  description: string | null;
-  image: string | null;
-  soundUrl: string | null;
-  soundPath: string | null;
-  publicId: string | null;
-  banner: string | null;
-  github: string | null;
-  phrase: string | null;
-  primaryColor: string | null;
-  secondaryColor: string | null;
-  createdAt: string;
+export interface TagProjectEntry extends Tag {
+  projectId: number | null;
 }
 
-interface roleEntry {
-  id: number;
-  name: string;
-}
-
-// Tags
-export interface tagEntry {
-  id: number | null;
-  name: string | null;
-}
-
-export interface tagMemberEntry extends tagEntry {
-  memberId: number | null;
-}
-
-export interface tagProjectEntry extends tagEntry {
+export interface ImageProjectEntry extends Omit<Image, "id"> {
   projectId: number | null;
 }

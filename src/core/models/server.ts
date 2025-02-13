@@ -7,7 +7,6 @@ import { authRouter } from "../../api/auth/route.js";
 import { userRouter } from "../../api/user/route.js";
 import { tagsRouter } from "../../api/tags/route.js";
 import { uploadRouter } from "../../api/upload/route.js";
-import { moderatorRouter } from "../../api/moderator/route.js";
 import { soundRouter } from "../../api/sound/route.js";
 import { redisClient } from "../../config/redis.config.js";
 
@@ -24,7 +23,7 @@ export class Server {
   }
 
   applyMiddlewares() {
-    const allowedOrigin = process.env.FRONTEND_REDIRECT_URI || "https://korxteam.netlify.app";
+    const allowedOrigin = process.env.FRONTEND_REDIRECT_URI;
 
     this.app.use(
       cors({
@@ -37,7 +36,7 @@ export class Server {
     );
 
     // Manejar preflight (OPTIONS) globalmente
-    this.app.options("*", (req, res) => {
+    this.app.options("*", (_req, res) => {
       res.header("Access-Control-Allow-Origin", allowedOrigin);
       res.header("Access-Control-Allow-Credentials", "true");
       res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
@@ -57,7 +56,6 @@ export class Server {
     this.app.use("/api", tagsRouter);
     this.app.use("/api", uploadRouter);
     this.app.use("/api", soundRouter);
-    this.app.use("/api", moderatorRouter);
     this.app.use(authRouter);
   }
 

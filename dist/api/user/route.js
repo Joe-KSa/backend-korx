@@ -9,8 +9,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import express from "express";
 import { db } from "../../db/index.js";
-import { users, sessions, moderators, members } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { users, sessions, roles, bans } from "../../db/schema.js";
+import { eq, and } from "drizzle-orm";
 import checkAuth from "../../middleware/checkAuth.js";
 export const userRouter = express.Router();
 userRouter.get("/user", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -31,26 +31,46 @@ userRouter.get("/user", checkAuth, (req, res) => __awaiter(void 0, void 0, void 
             return;
         }
         const userId = session[0].userId;
-        const userFromDB = yield db
-            .select()
+        // Obtener usuario y rol asociado
+        const user = yield db
+            .select({
+            id: users.id,
+            name: users.name,
+            username: users.username,
+            email: users.email,
+            image: users.image,
+            banner: users.banner,
+            bannerColor: users.bannerColor,
+            createdAt: users.createdAt,
+            updatedAt: users.updatedAt,
+            role: {
+                id: roles.id,
+                name: roles.name,
+            },
+        })
             .from(users)
+            .leftJoin(roles, eq(users.roleId, roles.id))
             .where(eq(users.id, userId))
             .limit(1);
-        if (userFromDB.length === 0) {
-            res.status(401).send("User not found");
+        if (user.length === 0) {
+            res.status(404).send("User not found");
             return;
         }
-        const user = userFromDB[0];
-        if (user.banned === 1) {
+        // Verificar si el usuario está baneado
+        const isBanned = yield db
+            .select()
+            .from(bans)
+            .where(eq(bans.userId, userId))
+            .limit(1);
+        if (isBanned.length > 0) {
             res.status(403).send("You are banned");
+            return;
         }
-        else {
-            res.status(200).json(user);
-        }
+        res.status(200).json(user[0]);
     }
     catch (err) {
-        console.error("Error fetching session:", err);
-        res.status(500).send("Error occurred while fetching session");
+        console.error("Error fetching user:", err);
+        res.status(500).send("Error occurred while fetching user");
     }
 }));
 userRouter.post("/user/:username/block", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -76,11 +96,16 @@ userRouter.post("/user/:username/block", checkAuth, (req, res) => __awaiter(void
             return;
         }
         const authUserId = session[0].userId;
+        if (!authUserId) {
+            res.status(401).send("Debes iniciar sesión para realizar esta acción");
+            return;
+        }
         // Verificar si el usuario autenticado es moderador
         const isModerator = yield db
             .select()
-            .from(moderators)
-            .where(eq(moderators.userId, authUserId)) // Ahora referencia users.id
+            .from(roles)
+            .innerJoin(users, eq(users.roleId, roles.id))
+            .where(and(eq(users.id, authUserId), eq(roles.name, "Moderador")))
             .limit(1);
         if (!isModerator.length) {
             res.status(403).send("No tienes permisos para bloquear usuarios");
@@ -97,17 +122,22 @@ userRouter.post("/user/:username/block", checkAuth, (req, res) => __awaiter(void
             return;
         }
         const userIdToBlock = userToBlock[0].id;
-        // Bloquear al usuario
-        yield db.transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            yield tx
-                .update(users)
-                .set({ writeAccess: 0 })
-                .where(eq(users.id, userIdToBlock));
-            yield tx
-                .update(members)
-                .set({ hidden: 1 })
-                .where(eq(members.username, username));
-        }));
+        // Verificar si el rol "Bloqueado" existe
+        const blockedRole = yield db
+            .select({ id: roles.id })
+            .from(roles)
+            .where(eq(roles.name, "Bloqueado"))
+            .limit(1);
+        if (!blockedRole.length) {
+            res.status(500).send("El rol 'Bloqueado' no existe en la base de datos");
+            return;
+        }
+        const blockedRoleId = blockedRole[0].id;
+        // Asignar el rol "Bloqueado" al usuario
+        yield db
+            .update(users)
+            .set({ roleId: blockedRoleId })
+            .where(eq(users.id, userIdToBlock));
         res.status(200).send("Usuario bloqueado correctamente");
     }
     catch (err) {
@@ -138,11 +168,16 @@ userRouter.post("/user/:username/unblock", checkAuth, (req, res) => __awaiter(vo
             return;
         }
         const authUserId = session[0].userId;
+        if (!authUserId) {
+            res.status(401).send("Debes iniciar sesión para realizar esta acción");
+            return;
+        }
         // Verificar si el usuario autenticado es moderador
         const isModerator = yield db
             .select()
-            .from(moderators)
-            .where(eq(moderators.userId, authUserId))
+            .from(roles)
+            .innerJoin(users, eq(users.roleId, roles.id))
+            .where(and(eq(users.id, authUserId), eq(roles.name, "Moderador")))
             .limit(1);
         if (!isModerator.length) {
             res.status(403).send("No tienes permisos para desbloquear usuarios");
@@ -159,17 +194,22 @@ userRouter.post("/user/:username/unblock", checkAuth, (req, res) => __awaiter(vo
             return;
         }
         const userIdToUnblock = userToUnblock[0].id;
-        // Desbloquear al usuario
-        yield db.transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            yield tx
-                .update(users)
-                .set({ writeAccess: 1 })
-                .where(eq(users.id, userIdToUnblock));
-            yield tx
-                .update(members)
-                .set({ hidden: 0 })
-                .where(eq(members.username, username));
-        }));
+        // Verificar si el rol "Miembro" existe
+        const memberRole = yield db
+            .select({ id: roles.id })
+            .from(roles)
+            .where(eq(roles.name, "Miembro"))
+            .limit(1);
+        if (!memberRole.length) {
+            res.status(500).send("El rol 'Miembro' no existe en la base de datos");
+            return;
+        }
+        const memberRoleId = memberRole[0].id;
+        // Asignar el rol "Miembro" al usuario
+        yield db
+            .update(users)
+            .set({ roleId: memberRoleId })
+            .where(eq(users.id, userIdToUnblock));
         res.status(200).send("Usuario desbloqueado correctamente");
     }
     catch (err) {

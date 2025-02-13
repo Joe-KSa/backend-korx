@@ -16,7 +16,6 @@ import { authRouter } from "../../api/auth/route.js";
 import { userRouter } from "../../api/user/route.js";
 import { tagsRouter } from "../../api/tags/route.js";
 import { uploadRouter } from "../../api/upload/route.js";
-import { moderatorRouter } from "../../api/moderator/route.js";
 import { soundRouter } from "../../api/sound/route.js";
 import { redisClient } from "../../config/redis.config.js";
 export class Server {
@@ -39,12 +38,22 @@ export class Server {
         this.routes(); // Configura las rutas
     }
     applyMiddlewares() {
+        const allowedOrigin = process.env.FRONTEND_REDIRECT_URI;
         this.app.use(cors({
-            origin: process.env.FRONTEND_REDIRECT_URI,
+            origin: allowedOrigin,
             credentials: true,
-            methods: ["GET", "POST", "PUT", "DELETE"],
-            exposedHeaders: ['Set-Cookie', 'Cookie', 'Authorization']
-        })); // Habilita CORS
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+            allowedHeaders: ["Content-Type", "Authorization"],
+            exposedHeaders: ["Set-Cookie"],
+        }));
+        // Manejar preflight (OPTIONS) globalmente
+        this.app.options("*", (_req, res) => {
+            res.header("Access-Control-Allow-Origin", allowedOrigin);
+            res.header("Access-Control-Allow-Credentials", "true");
+            res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+            res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            res.sendStatus(200);
+        });
         this.app.use(express.json({ limit: "3mb" })); // Aumenta el límite del body JSON
         this.app.use(express.urlencoded({ limit: "3mb", extended: true })); // Para datos de formularios grandes
         this.app.use(cookieParser()); // Habilita cookies
@@ -56,7 +65,6 @@ export class Server {
         this.app.use("/api", tagsRouter);
         this.app.use("/api", uploadRouter);
         this.app.use("/api", soundRouter);
-        this.app.use("/api", moderatorRouter); // Rutas para moderadores
         this.app.use(authRouter);
     }
     listen() {

@@ -1,6 +1,5 @@
 import express from "express";
 import type { Request, Response } from "express";
-
 import { db } from "../../db/index.js";
 import {
   projects,
@@ -8,76 +7,93 @@ import {
   projectTags,
   members,
   projectMembers,
+  users,
+  projectImages,
+  images,
 } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
 import type {
-  projectEntry,
-  tagProjectEntry,
-  projectMemberEntry,
+  ProjectEntry,
+  Tag,
+  Member,
 } from "../../core/types.js";
-import checkAuth from "../../middleware/checkAuth.js";
 
 export const projectRouter = express.Router();
 
 projectRouter.get("/project", async (_req: Request, res: Response) => {
   try {
-    const projectsData: projectEntry[] = await db
+    const rawData = await db
       .select({
-        id: projects.id,
+        projectId: projects.id,
         title: projects.title,
         description: projects.description,
         repository: projects.repository,
         url: projects.url,
-        image: projects.image,
-        publicId: projects.publicId,
-        creator: {
-          id: members.id,
-          name: members.name,
-          username: members.username,
-          image: members.image,
-        },
+        creatorId: users.id,
+        creatorName: users.name,
+        creatorUsername: users.username,
+        creatorImage: users.image,
+        tagId: tags.id,
+        tagName: tags.name,
+        imageUrl: images.url,
+        imagePublicId: images.publicId,
+        imageType: projectImages.type,
+        memberId: members.id,
+        memberName: members.name,
       })
       .from(projects)
-      .leftJoin(members, eq(projects.memberId, members.id));
+      .leftJoin(users, eq(projects.userId, users.id))
+      .leftJoin(projectTags, eq(projects.id, projectTags.projectId))
+      .leftJoin(tags, eq(projectTags.tagId, tags.id))
+      .leftJoin(projectImages, eq(projects.id, projectImages.projectId))
+      .leftJoin(images, eq(projectImages.imageId, images.id))
+      .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+      .leftJoin(members, eq(projectMembers.memberId, members.id));
 
-    const projectTagsData: tagProjectEntry[] = await db
-      .select({
-        projectId: projectTags.projectId,
-        id: tags.id,
-        name: tags.name,
-      })
-      .from(projectTags)
-      .leftJoin(tags, eq(projectTags.tagId, tags.id));
+    // Estructura de proyectos con agrupación en memoria
+    const projectsMap = new Map<number, ProjectEntry>();
 
-    const projectWithTags = projectsData.map((project) => {
-      const projectTags = projectTagsData
-        .filter((tag) => tag.projectId === project.id)
-        .map((tag) => ({ id: tag.id, name: tag.name }));
-      return { ...project, tags: projectTags };
-    });
+    for (const row of rawData) {
+      if (!projectsMap.has(row.projectId)) {
+        projectsMap.set(row.projectId, {
+          id: row.projectId,
+          title: row.title,
+          description: row.description,
+          repository: row.repository,
+          url: row.url,
+          creator: {
+            id: row.creatorId,
+            name: row.creatorName,
+            username: row.creatorUsername,
+            image: row.creatorImage,
+          },
+          tags: [],
+          images: row.imageType === "general"
+            ? { url: row.imageUrl, publicId: row.imagePublicId, type: row.imageType }
+            : { url: null, publicId: null, type: null },
+          members: [],
+        });
+      }
 
-    const membersData: projectMemberEntry[] = await db
-      .select({
-        id: members.id,
-        name: members.name,
-        projectId: projectMembers.projectId,
-      })
-      .from(members)
-      .leftJoin(projectMembers, eq(projectMembers.memberId, members.id));
+      const project = projectsMap.get(row.projectId)!;
 
-    const projectsWithMembers = projectWithTags.map((project) => {
-      const projectMembers = membersData
-        .filter((member) => member.projectId === project.id)
-        .map((member) => ({ id: member.id, name: member.name }));
+      // Agregar etiquetas sin duplicados
+      if (row.tagId && !project.tags.some((tag: Tag) => tag.id === row.tagId)) {
+        project.tags.push({ id: row.tagId, name: row.tagName });
+      }
 
-      return { ...project, members: projectMembers };
-    });
+      // Agregar miembros sin duplicados
+      if (row.memberId && !project.members.some((m: Member) => m.id === row.memberId)) {
+        project.members.push({ id: row.memberId, name: row.memberName });
+      }
+    }
 
-    res.status(200).json(projectsWithMembers);
+    res.status(200).json(Array.from(projectsMap.values()));
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los proyectos" });
   }
 });
+
 
 projectRouter.get("/project/:id", async (req: Request, res: Response) => {
   try {
@@ -85,120 +101,99 @@ projectRouter.get("/project/:id", async (req: Request, res: Response) => {
     const { RefreshToken } = req.cookies;
 
     if (!RefreshToken) {
-      res.status(401).send("Unauthorized access");
+      res.status(401).json({ error: "Unauthorized access" });
       return;
     }
 
-    const projectData: projectEntry[] = await db
+    const rawData = await db
       .select({
-        id: projects.id,
+        projectId: projects.id,
         title: projects.title,
         description: projects.description,
         repository: projects.repository,
         url: projects.url,
-        image: projects.image,
-        publicId: projects.publicId,
-        creator: {
-          id: members.id,
-          name: members.name,
-          username: members.username,
-          image: members.image,
-        },
+        creatorId: users.id,
+        creatorName: users.name,
+        creatorUsername: users.username,
+        creatorImage: users.image,
+        tagId: tags.id,
+        tagName: tags.name,
+        imageUrl: images.url,
+        imagePublicId: images.publicId,
+        imageType: projectImages.type,
+        memberId: members.id,
+        memberName: members.name,
+        memberUsername: members.username,
+        memberRoleId: members.roleId,
       })
       .from(projects)
+      .leftJoin(users, eq(projects.userId, users.id))
+      .leftJoin(projectTags, eq(projects.id, projectTags.projectId))
+      .leftJoin(tags, eq(projectTags.tagId, tags.id))
+      .leftJoin(projectImages, eq(projects.id, projectImages.projectId))
+      .leftJoin(images, eq(projectImages.imageId, images.id))
+      .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+      .leftJoin(members, eq(projectMembers.memberId, members.id))
       .where(eq(projects.id, Number(id)));
 
-    if (projectData.length === 0) {
+    if (!rawData.length) {
       res.status(404).json({ error: "Proyecto no encontrado" });
+      return;
     }
 
-    const projectTagsData: tagProjectEntry[] = await db
-      .select({
-        projectId: projectTags.projectId,
-        id: tags.id,
-        name: tags.name,
-      })
-      .from(projectTags)
-      .leftJoin(tags, eq(projectTags.tagId, tags.id))
-      .where(eq(projectTags.projectId, Number(id)));
-
-    // Obtener los miembros del proyecto
-    const membersData: projectMemberEntry[] = await db
-      .select({
-        id: members.id,
-        name: members.name,
-        projectId: projectMembers.projectId,
-      })
-      .from(members)
-      .leftJoin(projectMembers, eq(projectMembers.memberId, members.id))
-      .where(eq(projectMembers.projectId, Number(id)));
-
-    const projectWithTags = {
-      ...projectData[0],
-      tags: projectTagsData.map((tag) => ({ id: tag.id, name: tag.name })),
-      members: membersData.map((member) => ({
-        id: member.id,
-        name: member.name,
-      })),
+    const project = rawData[0];
+    const projectDetails: ProjectEntry = {
+      id: project.projectId,
+      title: project.title,
+      description: project.description,
+      repository: project.repository,
+      url: project.url,
+      creator: {
+        id: project.creatorId,
+        name: project.creatorName,
+        username: project.creatorUsername,
+        image: project.creatorImage,
+      },
+      tags: [],
+      images: [],
+      members: [],
     };
 
-    res.status(200).json(projectWithTags);
+    const tagSet = new Set<number>();
+    const imageSet = new Set<string>();
+    const memberSet = new Set<number>();
+
+    for (const row of rawData) {
+      if (row.tagId && !tagSet.has(row.tagId)) {
+        tagSet.add(row.tagId);
+        projectDetails.tags.push({ id: row.tagId, name: row.tagName });
+      }
+
+      if (row.imageUrl && !imageSet.has(row.imageUrl)) {
+        imageSet.add(row.imageUrl);
+        projectDetails.images.push({
+          url: row.imageUrl,
+          publicId: row.imagePublicId,
+          type: row.imageType,
+        });
+      }
+
+      if (row.memberId && !memberSet.has(row.memberId)) {
+        memberSet.add(row.memberId);
+        projectDetails.members.push({
+          id: row.memberId,
+          name: row.memberName,
+          username: row.memberUsername,
+          roleId: row.memberRoleId,
+        });
+      }
+    }
+
+    res.status(200).json(projectDetails);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Error al obtener el proyecto" });
   }
 });
 
-projectRouter.post(
-  "/project",
-  checkAuth,
-  async (req: Request, res: Response) => {
-    try {
-      const { RefreshToken } = req.cookies;
 
-      if (!RefreshToken) {
-        res.status(401).send("Unauthorized access");
-        return;
-      }
-
-      
-      const { title, description, image, publicId, url, repository, tags } =
-        await req.body();
-
-      const newProject = await db
-        .insert(projects)
-        .values({
-          title,
-          description,
-          image,
-          publicId,
-          url,
-          repository,
-        })
-        .returning({
-          id: projects.id,
-          title: projects.title,
-          description: projects.description,
-          image: projects.image,
-          publicId: projects.publicId,
-          url: projects.url,
-          repository: projects.repository,
-        });
-
-      const projectId = newProject[0].id;
-
-      if (tags && tags.length > 0) {
-        const tagInserts = tags.map((tagId: number) => ({
-          projectId,
-          tagId,
-        }));
-        await db.insert(projectTags).values(tagInserts);
-      }
-
-      res.status(201).json(newProject);
-    } catch (error) {
-      console.error(error);
-      res.status(400).json({ error: "An error ocurred" });
-    }
-  }
-);

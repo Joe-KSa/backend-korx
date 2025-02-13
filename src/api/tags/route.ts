@@ -3,13 +3,13 @@ import type { Request, Response } from "express";
 
 import { db } from "../../db/index.js";
 import { tags } from "../../db/schema.js";
-import type { tagEntry } from "../../core/types.js";
+import type { Tag } from "../../core/types.js";
 
 export const tagsRouter = express.Router();
 
 tagsRouter.get("/tags", async (_req: Request, res: Response) => {
   try {
-    const tagsData: tagEntry[] = await db
+    const tagsData: Tag[] = await db
       .select({
         id: tags.id,
         name: tags.name,

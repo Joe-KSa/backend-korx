@@ -9,59 +9,72 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import express from "express";
 import { db } from "../../db/index.js";
-import { projects, tags, projectTags, members, projectMembers, } from "../../db/schema.js";
+import { projects, tags, projectTags, members, projectMembers, users, projectImages, images, } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
-import checkAuth from "../../middleware/checkAuth.js";
 export const projectRouter = express.Router();
 projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const projectsData = yield db
+        const rawData = yield db
             .select({
-            id: projects.id,
+            projectId: projects.id,
             title: projects.title,
             description: projects.description,
             repository: projects.repository,
             url: projects.url,
-            image: projects.image,
-            publicId: projects.publicId,
-            creator: {
-                id: members.id,
-                name: members.name,
-                username: members.username,
-                image: members.image,
-            },
+            creatorId: users.id,
+            creatorName: users.name,
+            creatorUsername: users.username,
+            creatorImage: users.image,
+            tagId: tags.id,
+            tagName: tags.name,
+            imageUrl: images.url,
+            imagePublicId: images.publicId,
+            imageType: projectImages.type,
+            memberId: members.id,
+            memberName: members.name,
         })
             .from(projects)
-            .leftJoin(members, eq(projects.memberId, members.id));
-        const projectTagsData = yield db
-            .select({
-            projectId: projectTags.projectId,
-            id: tags.id,
-            name: tags.name,
-        })
-            .from(projectTags)
-            .leftJoin(tags, eq(projectTags.tagId, tags.id));
-        const projectWithTags = projectsData.map((project) => {
-            const projectTags = projectTagsData
-                .filter((tag) => tag.projectId === project.id)
-                .map((tag) => ({ id: tag.id, name: tag.name }));
-            return Object.assign(Object.assign({}, project), { tags: projectTags });
-        });
-        const membersData = yield db
-            .select({
-            id: members.id,
-            name: members.name,
-            projectId: projectMembers.projectId,
-        })
-            .from(members)
-            .leftJoin(projectMembers, eq(projectMembers.memberId, members.id));
-        const projectsWithMembers = projectWithTags.map((project) => {
-            const projectMembers = membersData
-                .filter((member) => member.projectId === project.id)
-                .map((member) => ({ id: member.id, name: member.name }));
-            return Object.assign(Object.assign({}, project), { members: projectMembers });
-        });
-        res.status(200).json(projectsWithMembers);
+            .leftJoin(users, eq(projects.userId, users.id))
+            .leftJoin(projectTags, eq(projects.id, projectTags.projectId))
+            .leftJoin(tags, eq(projectTags.tagId, tags.id))
+            .leftJoin(projectImages, eq(projects.id, projectImages.projectId))
+            .leftJoin(images, eq(projectImages.imageId, images.id))
+            .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+            .leftJoin(members, eq(projectMembers.memberId, members.id));
+        // Estructura de proyectos con agrupación en memoria
+        const projectsMap = new Map();
+        for (const row of rawData) {
+            if (!projectsMap.has(row.projectId)) {
+                projectsMap.set(row.projectId, {
+                    id: row.projectId,
+                    title: row.title,
+                    description: row.description,
+                    repository: row.repository,
+                    url: row.url,
+                    creator: {
+                        id: row.creatorId,
+                        name: row.creatorName,
+                        username: row.creatorUsername,
+                        image: row.creatorImage,
+                    },
+                    tags: [],
+                    images: row.imageType === "general"
+                        ? { url: row.imageUrl, publicId: row.imagePublicId, type: row.imageType }
+                        : { url: null, publicId: null, type: null },
+                    members: [],
+                });
+            }
+            const project = projectsMap.get(row.projectId);
+            // Agregar etiquetas sin duplicados
+            if (row.tagId && !project.tags.some((tag) => tag.id === row.tagId)) {
+                project.tags.push({ id: row.tagId, name: row.tagName });
+            }
+            // Agregar miembros sin duplicados
+            if (row.memberId && !project.members.some((m) => m.id === row.memberId)) {
+                project.members.push({ id: row.memberId, name: row.memberName });
+            }
+        }
+        res.status(200).json(Array.from(projectsMap.values()));
     }
     catch (error) {
         res.status(500).json({ error: "Error al obtener los proyectos" });
@@ -72,99 +85,90 @@ projectRouter.get("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0
         const { id } = req.params;
         const { RefreshToken } = req.cookies;
         if (!RefreshToken) {
-            res.status(401).send("Unauthorized access");
+            res.status(401).json({ error: "Unauthorized access" });
             return;
         }
-        const projectData = yield db
+        const rawData = yield db
             .select({
-            id: projects.id,
+            projectId: projects.id,
             title: projects.title,
             description: projects.description,
             repository: projects.repository,
             url: projects.url,
-            image: projects.image,
-            publicId: projects.publicId,
-            creator: {
-                id: members.id,
-                name: members.name,
-                username: members.username,
-                image: members.image,
-            },
+            creatorId: users.id,
+            creatorName: users.name,
+            creatorUsername: users.username,
+            creatorImage: users.image,
+            tagId: tags.id,
+            tagName: tags.name,
+            imageUrl: images.url,
+            imagePublicId: images.publicId,
+            imageType: projectImages.type,
+            memberId: members.id,
+            memberName: members.name,
+            memberUsername: members.username,
+            memberRoleId: members.roleId,
         })
             .from(projects)
-            .where(eq(projects.id, Number(id)));
-        if (projectData.length === 0) {
-            res.status(404).json({ error: "Proyecto no encontrado" });
-        }
-        const projectTagsData = yield db
-            .select({
-            projectId: projectTags.projectId,
-            id: tags.id,
-            name: tags.name,
-        })
-            .from(projectTags)
+            .leftJoin(users, eq(projects.userId, users.id))
+            .leftJoin(projectTags, eq(projects.id, projectTags.projectId))
             .leftJoin(tags, eq(projectTags.tagId, tags.id))
-            .where(eq(projectTags.projectId, Number(id)));
-        // Obtener los miembros del proyecto
-        const membersData = yield db
-            .select({
-            id: members.id,
-            name: members.name,
-            projectId: projectMembers.projectId,
-        })
-            .from(members)
-            .leftJoin(projectMembers, eq(projectMembers.memberId, members.id))
-            .where(eq(projectMembers.projectId, Number(id)));
-        const projectWithTags = Object.assign(Object.assign({}, projectData[0]), { tags: projectTagsData.map((tag) => ({ id: tag.id, name: tag.name })), members: membersData.map((member) => ({
-                id: member.id,
-                name: member.name,
-            })) });
-        res.status(200).json(projectWithTags);
+            .leftJoin(projectImages, eq(projects.id, projectImages.projectId))
+            .leftJoin(images, eq(projectImages.imageId, images.id))
+            .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+            .leftJoin(members, eq(projectMembers.memberId, members.id))
+            .where(eq(projects.id, Number(id)));
+        if (!rawData.length) {
+            res.status(404).json({ error: "Proyecto no encontrado" });
+            return;
+        }
+        const project = rawData[0];
+        const projectDetails = {
+            id: project.projectId,
+            title: project.title,
+            description: project.description,
+            repository: project.repository,
+            url: project.url,
+            creator: {
+                id: project.creatorId,
+                name: project.creatorName,
+                username: project.creatorUsername,
+                image: project.creatorImage,
+            },
+            tags: [],
+            images: [],
+            members: [],
+        };
+        const tagSet = new Set();
+        const imageSet = new Set();
+        const memberSet = new Set();
+        for (const row of rawData) {
+            if (row.tagId && !tagSet.has(row.tagId)) {
+                tagSet.add(row.tagId);
+                projectDetails.tags.push({ id: row.tagId, name: row.tagName });
+            }
+            if (row.imageUrl && !imageSet.has(row.imageUrl)) {
+                imageSet.add(row.imageUrl);
+                projectDetails.images.push({
+                    url: row.imageUrl,
+                    publicId: row.imagePublicId,
+                    type: row.imageType,
+                });
+            }
+            if (row.memberId && !memberSet.has(row.memberId)) {
+                memberSet.add(row.memberId);
+                projectDetails.members.push({
+                    id: row.memberId,
+                    name: row.memberName,
+                    username: row.memberUsername,
+                    roleId: row.memberRoleId,
+                });
+            }
+        }
+        res.status(200).json(projectDetails);
     }
     catch (error) {
         console.error(error);
         res.status(500).json({ error: "Error al obtener el proyecto" });
-    }
-}));
-projectRouter.post("/project", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    try {
-        const { RefreshToken } = req.cookies;
-        if (!RefreshToken) {
-            res.status(401).send("Unauthorized access");
-            return;
-        }
-        const { title, description, image, publicId, url, repository, tags } = yield req.body();
-        const newProject = yield db
-            .insert(projects)
-            .values({
-            title,
-            description,
-            image,
-            publicId,
-            url,
-            repository,
-        })
-            .returning({
-            id: projects.id,
-            title: projects.title,
-            description: projects.description,
-            image: projects.image,
-            publicId: projects.publicId,
-            url: projects.url,
-            repository: projects.repository,
-        });
-        const projectId = newProject[0].id;
-        if (tags && tags.length > 0) {
-            const tagInserts = tags.map((tagId) => ({
-                projectId,
-                tagId,
-            }));
-            yield db.insert(projectTags).values(tagInserts);
-        }
-        res.status(201).json(newProject);
-    }
-    catch (error) {
-        console.error(error);
-        res.status(400).json({ error: "An error ocurred" });
     }
 }));

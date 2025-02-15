@@ -8,12 +8,15 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { v2 as cloudinary } from "cloudinary";
+import { randomUUID } from "crypto";
 export class Cloudinary {
     static uploadToCloudinary(buffer, fileName) {
         return __awaiter(this, void 0, void 0, function* () {
+            const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+            const uniqueId = randomUUID();
             return new Promise((resolve, reject) => {
                 cloudinary.uploader
-                    .upload_stream({ public_id: `korxteam/${Date.now()}-${fileName}` }, (error, result) => {
+                    .upload_stream({ public_id: `korxteam/${uniqueId}-${safeFileName}` }, (error, result) => {
                     if (error) {
                         reject(error);
                     }

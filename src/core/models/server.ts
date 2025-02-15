@@ -9,6 +9,7 @@ import { tagsRouter } from "../../api/tags/route.js";
 import { uploadRouter } from "../../api/upload/route.js";
 import { soundRouter } from "../../api/sound/route.js";
 import { redisClient } from "../../config/redis.config.js";
+import { projectMember } from "../../api/projectMember/route.js";
 
 export class Server {
   private port: number;
@@ -51,6 +52,7 @@ export class Server {
 
   routes() {
     this.app.use("/api", projectRouter);
+    this.app.use("/api", projectMember);
     this.app.use("/api", memberRouter);
     this.app.use("/api", userRouter);
     this.app.use("/api", tagsRouter);

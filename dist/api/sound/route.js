@@ -14,27 +14,27 @@ import "dotenv/config";
 import { supabase } from "../../config/supabase.config.js";
 const upload = multer();
 export const soundRouter = express.Router();
+import slugify from "slugify";
 soundRouter.post("/upload-sound", checkAuth, upload.single("sound"), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { RefreshToken } = req.cookies;
-        if (!RefreshToken) {
-            res.status(401).json({ error: "Unauthorized access" });
-            return;
-        }
         if (!req.file) {
             res.status(400).json({ error: "No se ha adjuntado ningún sonido" });
             return;
         }
         const { originalname, mimetype, buffer } = req.file;
-        const filePath = `${Date.now()}_${originalname}`;
+        const extension = originalname.split(".").pop();
+        const baseName = slugify.default(originalname.replace(`.${extension}`, ""), {
+            lower: true,
+            strict: true,
+        });
+        const safeFileName = `${baseName}.${extension}`;
+        const filePath = `${Date.now()}_${safeFileName}`;
         const { error } = yield supabase.storage
             .from("sonidos")
-            .upload(filePath, buffer, { contentType: mimetype });
+            .upload(filePath, new Blob([buffer]), { contentType: mimetype });
         if (error)
             throw error;
-        const { publicUrl } = supabase.storage
-            .from("sonidos")
-            .getPublicUrl(filePath).data;
+        const { publicUrl } = supabase.storage.from("sonidos").getPublicUrl(filePath).data;
         res.json({
             message: "Sonido subido exitosamente",
             soundUrl: publicUrl,
@@ -54,10 +54,14 @@ soundRouter.delete("/upload-sound", checkAuth, (req, res) => __awaiter(void 0, v
         }
         const { soundPath } = req.body;
         if (!soundPath || typeof soundPath !== "string") {
-            res.status(400).json({ error: "No se ha proporcionado un soundPath válido" });
+            res
+                .status(400)
+                .json({ error: "No se ha proporcionado un soundPath válido" });
             return;
         }
-        const { error } = yield supabase.storage.from("sonidos").remove([soundPath]);
+        const { error } = yield supabase.storage
+            .from("sonidos")
+            .remove([soundPath]);
         if (error) {
             console.error("Error de Supabase:", error);
             throw error;

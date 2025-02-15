@@ -9,7 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import express from "express";
 import { db } from "../../db/index.js";
-import { projects, tags, projectTags, members, projectMembers, users, projectImages, images, } from "../../db/schema.js";
+import { projects, tags, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
 export const projectRouter = express.Router();
 projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -32,6 +32,24 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             imageType: projectImages.type,
             memberId: members.id,
             memberName: members.name,
+            memberUsername: members.username,
+            memberUserId: members.userId,
+            memberDescription: members.description,
+            memberHidden: members.hidden,
+            memberGithub: members.github,
+            memberPhrase: members.phrase,
+            memberPrimaryColor: members.primaryColor,
+            memberSecondaryColor: members.secondaryColor,
+            memberCreatedAt: members.createdAt,
+            roleId: roles.id,
+            roleName: roles.name,
+            memberImageType: memberImages.type,
+            memberImageUrl: images.url,
+            memberImagePublicId: images.publicId,
+            soundId: sounds.id,
+            soundUrl: sounds.url,
+            soundPath: sounds.path,
+            soundType: memberSounds.type,
         })
             .from(projects)
             .leftJoin(users, eq(projects.userId, users.id))
@@ -40,10 +58,15 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             .leftJoin(projectImages, eq(projects.id, projectImages.projectId))
             .leftJoin(images, eq(projectImages.imageId, images.id))
             .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
-            .leftJoin(members, eq(projectMembers.memberId, members.id));
-        // Estructura de proyectos con agrupación en memoria
+            .leftJoin(members, eq(projectMembers.memberId, members.id))
+            .leftJoin(roles, eq(members.roleId, roles.id))
+            .leftJoin(memberImages, eq(members.id, memberImages.memberId))
+            .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
+            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id));
         const projectsMap = new Map();
         for (const row of rawData) {
+            if (!row.projectId)
+                continue;
             if (!projectsMap.has(row.projectId)) {
                 projectsMap.set(row.projectId, {
                     id: row.projectId,
@@ -65,18 +88,60 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
                 });
             }
             const project = projectsMap.get(row.projectId);
-            // Agregar etiquetas sin duplicados
+            if (!project)
+                continue;
             if (row.tagId && !project.tags.some((tag) => tag.id === row.tagId)) {
                 project.tags.push({ id: row.tagId, name: row.tagName });
             }
-            // Agregar miembros sin duplicados
             if (row.memberId && !project.members.some((m) => m.id === row.memberId)) {
-                project.members.push({ id: row.memberId, name: row.memberName });
+                project.members.push({
+                    id: row.memberId,
+                    name: row.memberName,
+                    username: row.memberUsername,
+                    userId: row.memberUserId,
+                    createdAt: row.memberCreatedAt,
+                    role: row.roleId ? { id: row.roleId, name: row.roleName } : null,
+                    description: row.memberDescription,
+                    hidden: row.memberHidden,
+                    github: row.memberGithub,
+                    phrase: row.memberPhrase,
+                    primaryColor: row.memberPrimaryColor,
+                    secondaryColor: row.memberSecondaryColor,
+                    tags: [],
+                    images: {
+                        avatar: { url: "", publicId: "" },
+                        banner: { url: "", publicId: "" },
+                    },
+                    sound: {
+                        url: row.soundUrl || "",
+                        path: row.soundPath || "",
+                        type: row.soundType || "",
+                    },
+                });
+            }
+            const member = project.members.find((m) => m.id === row.memberId);
+            if (!member)
+                continue;
+            if (row.tagId && !member.tags.some((tag) => tag.id === row.tagId)) {
+                member.tags.push({ id: row.tagId, name: row.tagName });
+            }
+            if (row.memberImageType === "avatar") {
+                member.images.avatar = {
+                    url: row.memberImageUrl,
+                    publicId: row.memberImagePublicId,
+                };
+            }
+            if (row.memberImageType === "banner") {
+                member.images.banner = {
+                    url: row.memberImageUrl,
+                    publicId: row.memberImagePublicId,
+                };
             }
         }
         res.status(200).json(Array.from(projectsMap.values()));
     }
     catch (error) {
+        console.error("Error en /project:", error);
         res.status(500).json({ error: "Error al obtener los proyectos" });
     }
 }));

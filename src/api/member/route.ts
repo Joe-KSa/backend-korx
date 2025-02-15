@@ -97,6 +97,8 @@ memberRouter.get("/member", async (_req: Request, res: Response) => {
         member.tags.push({ id: row.tagId, name: row.tagName });
       }
 
+      
+
       if (member.images) {
         if (row.imageType === "avatar") {
           member.images.avatar = {

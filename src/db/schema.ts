@@ -169,6 +169,7 @@ export const roles = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     name: text("name", { length: 50 }).notNull(),
+    priority: integer("priority").notNull().default(1)
   },
   (table) => ({
     roleIndex: index("idx_roles_name").on(table.name),
@@ -414,5 +415,31 @@ export const projectMembers = sqliteTable(
     uniqueProjectMember: unique(
       "uq_project_members_project_id_member_id_role_id"
     ).on(table.projectId, table.memberId, table.roleId),
+  })
+);
+
+
+// Notifications
+
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references((): AnySQLiteColumn => users.id, { onDelete: "cascade" }), // Usuario que recibe la notificación
+    senderId: text("sender_id").references((): AnySQLiteColumn => users.id, {
+      onDelete: "set null",
+    }), // Usuario que generó la notificación
+    type: text("type", { length: 50 }).notNull(), // "project_invite", "like", "comment", etc.
+    entityId: integer("entity_id"), // ID del recurso relacionado (ej. id del proyecto)
+    message: text("message", { length: 255 }).notNull(), // Mensaje personalizado
+    status: text("status", { length: 20 }).default("pending"), // "pending", "accepted", "rejected", "read"
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    userNotificationIndex: index("idx_notifications_user_id").on(table.userId),
   })
 );

@@ -152,14 +152,12 @@ authRouter.get("/auth/discord/callback", (req, res) => __awaiter(void 0, void 0,
             .select()
             .from(sessions)
             .where(eq(sessions.userId, id))
-            .orderBy(asc(sessions.createdAt)) // Ordenar por fecha de creación (las más antiguas primero)
-            .limit(maxSessions);
+            .orderBy(asc(sessions.createdAt)); // Ordenar por fecha de creación (las más antiguas primero)
+        // Verificar si hay más de 3 sesiones
         if (userSessions.length >= maxSessions) {
-            yield db
-                .delete(sessions)
-                .where(eq(sessions.userId, id))
-                .orderBy(asc(sessions.createdAt))
-                .limit(1);
+            // Eliminar la sesión más antigua
+            const sessionToDelete = userSessions[0]; // La sesión más antigua es la primera en la lista
+            yield db.delete(sessions).where(eq(sessions.id, sessionToDelete.id));
         }
         // Insertar la nueva sesión
         const refreshToken = uuidv4();

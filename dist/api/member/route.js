@@ -9,19 +9,32 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { db } from "../../db/index.js";
 import express from "express";
-import { tags, members, roles, memberTags, images, memberImages, memberSounds, sounds, } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { tags, members, roles, users, memberTags, images, memberImages, memberSounds, sounds, projects } from "../../db/schema.js";
+import { eq, desc, asc, sql } from "drizzle-orm";
 import checkAuth from "../../middleware/checkAuth.js";
 export const memberRouter = express.Router();
-memberRouter.get("/member", (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
+memberRouter.get("/member", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        const sort = req.query.sort === 'desc' ? 'desc' : 'asc';
+        const sortBy = req.query.sortBy || 'id';
+        // Definir campos válidos para ordenamiento
+        const validSortFields = {
+            projectsCount: sql `(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`,
+            name: sql `${members.name}`,
+            createdAt: sql `${members.createdAt}`,
+            id: sql `${members.id}`,
+            rolePriority: sql `${roles.priority}`
+        };
+        // Obtener campo y dirección de ordenamiento
+        const orderDirection = sort === 'asc' ? asc : desc;
+        const orderField = validSortFields[sortBy] || members.id;
         const rawData = yield db
             .select({
             memberId: members.id,
             userId: members.userId,
             name: members.name,
             username: members.username,
-            roleId: roles.id,
+            roleId: users.roleId,
             roleName: roles.name,
             description: members.description,
             hidden: members.hidden,
@@ -36,18 +49,22 @@ memberRouter.get("/member", (_req, res) => __awaiter(void 0, void 0, void 0, fun
             imagePublicId: images.publicId,
             imageType: memberImages.type,
             soundId: sounds.id,
+            rolePriority: roles.priority,
             soundUrl: sounds.url,
             soundPath: sounds.path,
             soundType: memberSounds.type,
+            projectsCount: sql `(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as("projectsCount"),
         })
             .from(members)
-            .leftJoin(roles, eq(members.roleId, roles.id))
+            .leftJoin(users, eq(members.userId, users.id))
+            .leftJoin(roles, eq(users.roleId, roles.id))
             .leftJoin(memberTags, eq(members.id, memberTags.memberId))
             .leftJoin(tags, eq(memberTags.tagId, tags.id))
             .leftJoin(memberImages, eq(members.id, memberImages.memberId))
             .leftJoin(images, eq(memberImages.imageId, images.id))
             .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
-            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id));
+            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
+            .orderBy(orderDirection(orderField));
         if (!rawData.length) {
             res.status(200).json([]);
             return;
@@ -81,126 +98,38 @@ memberRouter.get("/member", (_req, res) => __awaiter(void 0, void 0, void 0, fun
                         path: row.soundPath || "",
                         type: row.soundType || "",
                     },
+                    projectsCount: Number(row.projectsCount) || 0,
                 });
             }
             const member = membersMap.get(row.memberId);
             if (row.tagId && !member.tags.some((tag) => tag.id === row.tagId)) {
                 member.tags.push({ id: row.tagId, name: row.tagName });
             }
-            if (member.images) {
-                if (row.imageType === "avatar") {
-                    member.images.avatar = {
-                        url: row.imageUrl,
-                        publicId: row.imagePublicId,
-                    };
-                }
-                if (row.imageType === "banner") {
-                    member.images.banner = {
-                        url: row.imageUrl,
-                        publicId: row.imagePublicId,
-                    };
-                }
+            if (member.images && row.imageType === "avatar") {
+                member.images.avatar = {
+                    url: row.imageUrl || "",
+                    publicId: row.imagePublicId || "",
+                };
+            }
+            if (member.images && row.imageType === "banner") {
+                member.images.banner = {
+                    url: row.imageUrl || "",
+                    publicId: row.imagePublicId || "",
+                };
             }
         }
-        res.status(200).json(Array.from(membersMap.values()));
+        const sortedMembers = Array.from(membersMap.values());
+        // Ordenamiento adicional en caso necesario
+        if (sortBy === 'projectsCount') {
+            sortedMembers.sort((a, b) => sort === 'desc'
+                ? a.projectsCount - b.projectsCount
+                : b.projectsCount - a.projectsCount);
+        }
+        res.status(200).json(sortedMembers);
     }
     catch (err) {
         console.error(err);
         res.status(500).json({ error: "Error al obtener los miembros" });
-    }
-}));
-memberRouter.get("/member/:username", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    try {
-        const { username } = req.params;
-        const rawData = yield db
-            .select({
-            memberId: members.id,
-            name: members.name,
-            username: members.username,
-            userId: members.userId,
-            roleId: roles.id,
-            roleName: roles.name,
-            description: members.description,
-            hidden: members.hidden,
-            github: members.github,
-            phrase: members.phrase,
-            primaryColor: members.primaryColor,
-            secondaryColor: members.secondaryColor,
-            tagId: tags.id,
-            tagName: tags.name,
-            imageUrl: images.url,
-            imagePublicId: images.publicId,
-            imageType: memberImages.type,
-            soundId: sounds.id,
-            soundUrl: sounds.url,
-            soundPath: sounds.path,
-            soundType: memberSounds.type,
-            createdAt: members.createdAt,
-        })
-            .from(members)
-            .leftJoin(roles, eq(members.roleId, roles.id))
-            .leftJoin(memberTags, eq(members.id, memberTags.memberId))
-            .leftJoin(tags, eq(memberTags.tagId, tags.id))
-            .leftJoin(memberImages, eq(members.id, memberImages.memberId))
-            .leftJoin(images, eq(memberImages.imageId, images.id))
-            .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
-            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
-            .where(eq(members.username, username));
-        if (!rawData.length) {
-            res.status(404).json({ error: "Miembro no encontrado" });
-            return;
-        }
-        const memberData = {
-            id: rawData[0].memberId,
-            name: rawData[0].name,
-            username: rawData[0].username,
-            userId: rawData[0].userId,
-            createdAt: rawData[0].createdAt,
-            role: {
-                id: rawData[0].roleId,
-                name: rawData[0].roleName,
-            },
-            description: rawData[0].description,
-            hidden: rawData[0].hidden,
-            github: rawData[0].github,
-            phrase: rawData[0].phrase,
-            primaryColor: rawData[0].primaryColor,
-            secondaryColor: rawData[0].secondaryColor,
-            tags: [],
-            images: {
-                avatar: { url: "", publicId: "" },
-                banner: { url: "", publicId: "" },
-            },
-            sound: {
-                url: rawData[0].soundUrl,
-                path: rawData[0].soundPath,
-                type: rawData[0].soundType,
-            },
-        };
-        for (const row of rawData) {
-            if (row.tagId && !memberData.tags.some((tag) => tag.id === row.tagId)) {
-                memberData.tags.push({ id: row.tagId, name: row.tagName });
-            }
-            if (memberData.images) {
-                if (row.imageType === "avatar") {
-                    memberData.images.avatar = {
-                        url: row.imageUrl,
-                        publicId: row.imagePublicId,
-                    };
-                }
-                if (row.imageType === "banner") {
-                    memberData.images.banner = {
-                        url: row.imageUrl,
-                        publicId: row.imagePublicId,
-                    };
-                }
-            }
-        }
-        res.status(200).json(memberData);
-    }
-    catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error al obtener el miembro" });
     }
 }));
 memberRouter.put("/member/:id", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -347,5 +276,99 @@ memberRouter.put("/member/:id", checkAuth, (req, res) => __awaiter(void 0, void 
     catch (error) {
         console.error(error);
         res.status(500).send("Internal Server Error");
+    }
+}));
+memberRouter.get("/member/:username", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { username } = req.params;
+        const rawData = yield db
+            .select({
+            memberId: members.id,
+            name: members.name,
+            username: members.username,
+            userId: members.userId,
+            roleId: roles.id,
+            roleName: roles.name,
+            description: members.description,
+            hidden: members.hidden,
+            github: members.github,
+            phrase: members.phrase,
+            primaryColor: members.primaryColor,
+            secondaryColor: members.secondaryColor,
+            tagId: tags.id,
+            tagName: tags.name,
+            imageUrl: images.url,
+            imagePublicId: images.publicId,
+            imageType: memberImages.type,
+            soundId: sounds.id,
+            soundUrl: sounds.url,
+            soundPath: sounds.path,
+            soundType: memberSounds.type,
+            createdAt: members.createdAt,
+        })
+            .from(members)
+            .leftJoin(roles, eq(members.roleId, roles.id))
+            .leftJoin(memberTags, eq(members.id, memberTags.memberId))
+            .leftJoin(tags, eq(memberTags.tagId, tags.id))
+            .leftJoin(memberImages, eq(members.id, memberImages.memberId))
+            .leftJoin(images, eq(memberImages.imageId, images.id))
+            .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
+            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
+            .where(eq(members.username, username));
+        if (!rawData.length) {
+            res.status(404).json({ error: "Miembro no encontrado" });
+            return;
+        }
+        const memberData = {
+            id: rawData[0].memberId,
+            name: rawData[0].name,
+            username: rawData[0].username,
+            userId: rawData[0].userId,
+            createdAt: rawData[0].createdAt,
+            role: {
+                id: rawData[0].roleId,
+                name: rawData[0].roleName,
+            },
+            description: rawData[0].description,
+            hidden: rawData[0].hidden,
+            github: rawData[0].github,
+            phrase: rawData[0].phrase,
+            primaryColor: rawData[0].primaryColor,
+            secondaryColor: rawData[0].secondaryColor,
+            tags: [],
+            images: {
+                avatar: { url: "", publicId: "" },
+                banner: { url: "", publicId: "" },
+            },
+            sound: {
+                url: rawData[0].soundUrl,
+                path: rawData[0].soundPath,
+                type: rawData[0].soundType,
+            },
+        };
+        for (const row of rawData) {
+            if (row.tagId && !memberData.tags.some((tag) => tag.id === row.tagId)) {
+                memberData.tags.push({ id: row.tagId, name: row.tagName });
+            }
+            if (memberData.images) {
+                if (row.imageType === "avatar") {
+                    memberData.images.avatar = {
+                        url: row.imageUrl,
+                        publicId: row.imagePublicId,
+                    };
+                }
+                if (row.imageType === "banner") {
+                    memberData.images.banner = {
+                        url: row.imageUrl,
+                        publicId: row.imagePublicId,
+                    };
+                }
+            }
+        }
+        res.status(200).json(memberData);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error al obtener el miembro" });
     }
 }));

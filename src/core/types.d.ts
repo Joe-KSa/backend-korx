@@ -40,6 +40,7 @@ interface Member {
   secondaryColor: string | null;
   hidden: boolean;
   createdAt: string;
+  projectsCount: number;
 }
 
 

@@ -17,6 +17,11 @@ export const soundRouter = express.Router();
 import slugify from "slugify";
 soundRouter.post("/upload-sound", checkAuth, upload.single("sound"), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        const { RefreshToken } = req.cookies;
+        if (!RefreshToken) {
+            res.status(401).json({ error: "Unauthorized access" });
+            return;
+        }
         if (!req.file) {
             res.status(400).json({ error: "No se ha adjuntado ningún sonido" });
             return;

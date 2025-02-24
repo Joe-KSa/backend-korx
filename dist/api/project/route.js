@@ -9,8 +9,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import express from "express";
 import { db } from "../../db/index.js";
-import { projects, tags, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { projects, tags, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, notifications, memberTags, } from "../../db/schema.js";
+import { eq, inArray, and, sql, asc, desc } from "drizzle-orm";
+import checkAuth from "../../middleware/checkAuth.js";
+import { redisClient } from "../../config/redis.config.js";
 export const projectRouter = express.Router();
 projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -50,6 +52,7 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             soundUrl: sounds.url,
             soundPath: sounds.path,
             soundType: memberSounds.type,
+            hidden: projects.hidden,
         })
             .from(projects)
             .leftJoin(users, eq(projects.userId, users.id))
@@ -59,7 +62,7 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             .leftJoin(images, eq(projectImages.imageId, images.id))
             .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
             .leftJoin(members, eq(projectMembers.memberId, members.id))
-            .leftJoin(roles, eq(members.roleId, roles.id))
+            .leftJoin(roles, eq(projectMembers.roleId, roles.id))
             .leftJoin(memberImages, eq(members.id, memberImages.memberId))
             .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
             .leftJoin(sounds, eq(memberSounds.soundId, sounds.id));
@@ -82,9 +85,14 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
                     },
                     tags: [],
                     images: row.imageType === "general"
-                        ? { url: row.imageUrl, publicId: row.imagePublicId, type: row.imageType }
+                        ? {
+                            url: row.imageUrl,
+                            publicId: row.imagePublicId,
+                            type: row.imageType,
+                        }
                         : { url: null, publicId: null, type: null },
                     members: [],
+                    hidden: row.hidden,
                 });
             }
             const project = projectsMap.get(row.projectId);
@@ -93,7 +101,8 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             if (row.tagId && !project.tags.some((tag) => tag.id === row.tagId)) {
                 project.tags.push({ id: row.tagId, name: row.tagName });
             }
-            if (row.memberId && !project.members.some((m) => m.id === row.memberId)) {
+            if (row.memberId &&
+                !project.members.some((m) => m.id === row.memberId)) {
                 project.members.push({
                     id: row.memberId,
                     name: row.memberName,
@@ -145,12 +154,12 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
         res.status(500).json({ error: "Error al obtener los proyectos" });
     }
 }));
-projectRouter.get("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+projectRouter.get("/project/:id", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
         const { RefreshToken } = req.cookies;
         if (!RefreshToken) {
-            res.status(401).json({ error: "Unauthorized access" });
+            res.status(401).send("Unauthorized access");
             return;
         }
         const rawData = yield db
@@ -172,7 +181,24 @@ projectRouter.get("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0
             memberId: members.id,
             memberName: members.name,
             memberUsername: members.username,
-            memberRoleId: members.roleId,
+            memberUserId: members.userId,
+            memberDescription: members.description,
+            memberHidden: members.hidden,
+            memberGithub: members.github,
+            memberPhrase: members.phrase,
+            memberPrimaryColor: members.primaryColor,
+            memberSecondaryColor: members.secondaryColor,
+            memberCreatedAt: members.createdAt,
+            roleId: roles.id,
+            roleName: roles.name,
+            memberImageType: memberImages.type,
+            memberImageUrl: images.url, // Asegúrate de que este alias no entre en conflicto con el de las imágenes del proyecto
+            memberImagePublicId: images.publicId,
+            soundId: sounds.id,
+            soundUrl: sounds.url,
+            soundPath: sounds.path,
+            soundType: memberSounds.type,
+            hidden: projects.hidden,
         })
             .from(projects)
             .leftJoin(users, eq(projects.userId, users.id))
@@ -182,6 +208,10 @@ projectRouter.get("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0
             .leftJoin(images, eq(projectImages.imageId, images.id))
             .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
             .leftJoin(members, eq(projectMembers.memberId, members.id))
+            .leftJoin(roles, eq(projectMembers.roleId, roles.id))
+            .leftJoin(memberImages, eq(members.id, memberImages.memberId))
+            .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
+            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
             .where(eq(projects.id, Number(id)));
         if (!rawData.length) {
             res.status(404).json({ error: "Proyecto no encontrado" });
@@ -201,39 +231,521 @@ projectRouter.get("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0
                 image: project.creatorImage,
             },
             tags: [],
-            images: [],
+            images: project.imageType === "general"
+                ? {
+                    url: project.imageUrl,
+                    publicId: project.imagePublicId,
+                    type: project.imageType,
+                }
+                : { url: null, publicId: null, type: null },
             members: [],
+            hidden: project.hidden,
         };
         const tagSet = new Set();
-        const imageSet = new Set();
         const memberSet = new Set();
         for (const row of rawData) {
+            // Agregar tags al proyecto
             if (row.tagId && !tagSet.has(row.tagId)) {
                 tagSet.add(row.tagId);
                 projectDetails.tags.push({ id: row.tagId, name: row.tagName });
             }
-            if (row.imageUrl && !imageSet.has(row.imageUrl)) {
-                imageSet.add(row.imageUrl);
-                projectDetails.images.push({
-                    url: row.imageUrl,
-                    publicId: row.imagePublicId,
-                    type: row.imageType,
-                });
-            }
+            // Agregar miembros con todos los datos
             if (row.memberId && !memberSet.has(row.memberId)) {
                 memberSet.add(row.memberId);
                 projectDetails.members.push({
                     id: row.memberId,
                     name: row.memberName,
                     username: row.memberUsername,
-                    roleId: row.memberRoleId,
+                    userId: row.memberUserId,
+                    createdAt: row.memberCreatedAt,
+                    role: row.roleId ? { id: row.roleId, name: row.roleName } : null,
+                    description: row.memberDescription,
+                    hidden: row.memberHidden,
+                    github: row.memberGithub,
+                    phrase: row.memberPhrase,
+                    primaryColor: row.memberPrimaryColor,
+                    secondaryColor: row.memberSecondaryColor,
+                    tags: [],
+                    images: {
+                        avatar: { url: "", publicId: "" },
+                        banner: { url: "", publicId: "" },
+                    },
+                    sound: {
+                        url: row.soundUrl || "",
+                        path: row.soundPath || "",
+                        type: row.soundType || "",
+                    },
                 });
+            }
+            // Buscar el miembro ya agregado y actualizar datos adicionales
+            const member = projectDetails.members.find((m) => m.id === row.memberId);
+            if (!member)
+                continue;
+            // Agregar tags al miembro
+            if (row.tagId &&
+                !member.tags.some((tag) => tag.id === row.tagId)) {
+                member.tags.push({ id: row.tagId, name: row.tagName });
+            }
+            // Asignar imagenes según el tipo
+            if (row.memberImageType === "avatar") {
+                member.images.avatar = {
+                    url: row.memberImageUrl,
+                    publicId: row.memberImagePublicId,
+                };
+            }
+            if (row.memberImageType === "banner") {
+                member.images.banner = {
+                    url: row.memberImageUrl,
+                    publicId: row.memberImagePublicId,
+                };
             }
         }
         res.status(200).json(projectDetails);
     }
     catch (error) {
-        console.error(error);
+        console.error("Error al obtener el proyecto:", error);
         res.status(500).json({ error: "Error al obtener el proyecto" });
+    }
+}));
+projectRouter.post("/project", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { RefreshToken } = req.cookies;
+        if (!RefreshToken) {
+            res.status(401).json({ error: "Unauthorized access" });
+            return;
+        }
+        const { creator, title, description, images: requestImages, members: requestMembers, repository, tags, url, } = req.body;
+        const userId = creator.id;
+        const redisKey = `project_limit:${userId}`;
+        // Atomicidad con Lua
+        const limitScript = `
+      local current = redis.call('INCR', KEYS[1])
+      if current == 1 then
+        redis.call('EXPIRE', KEYS[1], 86400)
+      end
+      return current
+    `;
+        const projectCount = yield redisClient.eval(limitScript, {
+            keys: [redisKey],
+        });
+        const count = Number(projectCount !== null && projectCount !== void 0 ? projectCount : 0);
+        if (count > 2) {
+            res.status(429).json({
+                error: "Límite excedido: Máximo 2 proyectos por día",
+                resetIn: yield redisClient.ttl(redisKey)
+            });
+            return;
+        }
+        const newProject = yield db
+            .insert(projects)
+            .values({
+            title,
+            description,
+            repository,
+            url,
+            userId: creator.id,
+            hidden: true,
+        })
+            .returning({
+            id: projects.id,
+            title: projects.title,
+            description: projects.description,
+            repository: projects.repository,
+            url: projects.url,
+            userId: projects.userId,
+        });
+        const projectId = newProject[0].id;
+        if (tags && tags.length > 0) {
+            const tagInserts = tags.map((tagId) => ({
+                projectId,
+                tagId,
+            }));
+            yield db.insert(projectTags).values(tagInserts);
+        }
+        if (requestImages) {
+            const imagesToInsert = Array.isArray(requestImages)
+                ? requestImages
+                : [requestImages];
+            const insertedImages = yield db
+                .insert(images)
+                .values(imagesToInsert.map((img) => ({
+                url: img.url,
+                publicId: img.publicId,
+            })))
+                .returning({ id: images.id });
+            const imageAssociations = insertedImages.map((image) => ({
+                projectId,
+                imageId: image.id,
+            }));
+            yield db.insert(projectImages).values(imageAssociations);
+        }
+        // Miembros
+        if (requestMembers && requestMembers.length > 0) {
+            // 1. Buscar el registro de member correspondiente al creador usando su userId.
+            const creatorMemberRecord = yield db
+                .select({ id: members.id })
+                .from(members)
+                .where(eq(members.userId, creator.id))
+                .limit(1);
+            if (!creatorMemberRecord || creatorMemberRecord.length === 0) {
+                throw new Error("No se encontró el registro de miembro para el creador");
+            }
+            const creatorMemberId = creatorMemberRecord[0].id;
+            // 2. Verificar si el ID del member del creador está en la lista enviada
+            const creatorIncluded = requestMembers.includes(creatorMemberId);
+            if (creatorIncluded) {
+                // Insertar directamente en projectMembers para el creador.
+                yield db.insert(projectMembers).values({
+                    projectId,
+                    memberId: creatorMemberId,
+                    roleId: 4,
+                });
+                // Remover el creador del array para evitar enviarle una notificación.
+            }
+            const newMembers = requestMembers.filter((memberId) => memberId !== creatorMemberId);
+            // 3. Enviar invitaciones (notificaciones) a los miembros restantes.
+            if (newMembers.length > 0) {
+                // Buscar en la tabla 'members' los registros que tengan un id en newMembers
+                const memberRecords = yield db
+                    .select({ id: members.id, userId: members.userId })
+                    .from(members)
+                    .where(inArray(members.id, newMembers));
+                // Mapear los registros para obtener las notificaciones con el userId correcto
+                const memberInvites = memberRecords.map((member) => ({
+                    userId: member.userId, // Obtenemos el userId asociado al member
+                    senderId: creator.id, // El creador (userId) es quien envía la invitación.
+                    type: "project_invite",
+                    entityId: projectId,
+                    message: `Te han invitado a unirte al proyecto "${title}".`,
+                    status: "pending",
+                }));
+                yield db.insert(notifications).values(memberInvites);
+            }
+        }
+        res
+            .status(200)
+            .json({ message: "Proyecto creado y invitaciones enviadas." });
+    }
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al crear el proyecto" });
+    }
+}));
+projectRouter.get("/project/:id/members", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const projectId = Number(req.params.id);
+    if (isNaN(projectId)) {
+        res.status(400).json({ error: "ID de proyecto inválido" });
+        return;
+    }
+    const sort = req.query.sort === "desc" ? "desc" : "asc";
+    const sortBy = req.query.sortBy || "rolePriority";
+    const validSortFields = {
+        rolePriority: sql `${roles.priority}`,
+    };
+    // Obtener campo y dirección de ordenamiento
+    const orderDirection = sort === "asc" ? asc : desc;
+    const orderField = validSortFields[sortBy];
+    try {
+        const membersData = yield db
+            .select({
+            memberId: members.id,
+            memberName: members.name,
+            memberUsername: members.username,
+            memberUserId: members.userId,
+            memberDescription: members.description,
+            memberHidden: members.hidden,
+            memberGithub: members.github,
+            memberPhrase: members.phrase,
+            memberPrimaryColor: members.primaryColor,
+            memberSecondaryColor: members.secondaryColor,
+            memberCreatedAt: members.createdAt,
+            tagId: tags.id,
+            tagName: tags.name,
+            roleId: roles.id,
+            roleName: roles.name,
+            memberImageType: memberImages.type,
+            memberImageUrl: images.url,
+            memberImagePublicId: images.publicId,
+            soundId: sounds.id,
+            soundUrl: sounds.url,
+            soundPath: sounds.path,
+            soundType: memberSounds.type,
+        })
+            .from(projectMembers)
+            .leftJoin(members, eq(projectMembers.memberId, members.id))
+            .leftJoin(roles, eq(projectMembers.roleId, roles.id))
+            .leftJoin(memberImages, eq(members.id, memberImages.memberId))
+            .leftJoin(images, eq(memberImages.imageId, images.id))
+            .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
+            .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
+            .leftJoin(memberTags, eq(projectMembers.id, memberTags.memberId))
+            .leftJoin(tags, eq(memberTags.tagId, tags.id))
+            .where(eq(projectMembers.projectId, projectId))
+            .orderBy(orderDirection(orderField));
+        const membersMap = new Map();
+        for (const row of membersData) {
+            if (!row.memberId)
+                continue;
+            if (!membersMap.has(row.memberId)) {
+                membersMap.set(row.memberId, {
+                    id: row.memberId,
+                    name: row.memberName || "",
+                    username: row.memberUsername || "",
+                    userId: row.memberUserId || "",
+                    createdAt: row.memberCreatedAt || "",
+                    role: row.roleId ? { id: row.roleId, name: row.roleName } : null,
+                    description: row.memberDescription,
+                    hidden: row.memberHidden || false,
+                    github: row.memberGithub,
+                    phrase: row.memberPhrase,
+                    primaryColor: row.memberPrimaryColor,
+                    secondaryColor: row.memberSecondaryColor,
+                    tags: [],
+                    images: {
+                        avatar: { url: "", publicId: "" },
+                        banner: { url: "", publicId: "" },
+                    },
+                    sound: {
+                        url: row.soundUrl || "",
+                        path: row.soundPath || "",
+                        type: row.soundType || "",
+                    },
+                });
+            }
+            const member = membersMap.get(row.memberId);
+            if (member && member.images) {
+                if (row.tagId &&
+                    !member.tags.some((tag) => tag.id === row.tagId)) {
+                    member.tags.push({ id: row.tagId, name: row.tagName });
+                }
+                if (row.memberImageType === "avatar") {
+                    member.images.avatar = {
+                        url: row.memberImageUrl,
+                        publicId: row.memberImagePublicId,
+                    };
+                }
+                if (row.memberImageType === "banner") {
+                    member.images.banner = {
+                        url: row.memberImageUrl,
+                        publicId: row.memberImagePublicId,
+                    };
+                }
+            }
+        }
+        res.status(200).json(Array.from(membersMap.values()));
+    }
+    catch (error) {
+        console.error("Error en /project/:id/members:", error);
+        res
+            .status(500)
+            .json({ error: "Error al obtener los miembros del proyecto" });
+    }
+}));
+projectRouter.put("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    try {
+        const { id } = req.params;
+        const { RefreshToken } = req.cookies;
+        const { title, description, repository, url, images: requestImages, members: requestMembers, tags, } = req.body;
+        if (!RefreshToken) {
+            res.status(401).json({ error: "Unauthorized access" });
+            return;
+        }
+        // Obtener el proyecto actual
+        const existingProject = yield db
+            .select()
+            .from(projects)
+            .where(eq(projects.id, Number(id)))
+            .limit(1);
+        if (!existingProject.length) {
+            res.status(404).json({ error: "Proyecto no encontrado" });
+            return;
+        }
+        // Construir objeto de actualización evitando sobreescribir todos los valores
+        const updatedFields = {
+            hidden: true, // Ocultar proyecto para revision
+        };
+        if (title)
+            updatedFields.title = title;
+        if (description)
+            updatedFields.description = description;
+        if (repository)
+            updatedFields.repository = repository;
+        if (url)
+            updatedFields.url = url;
+        if (Object.keys(updatedFields).length > 0) {
+            yield db
+                .update(projects)
+                .set(updatedFields)
+                .where(eq(projects.id, Number(id)));
+        }
+        // Actualizar tags
+        if (Array.isArray(tags)) {
+            // Eliminar relaciones actuales de tags con el proyecto
+            yield db.delete(projectTags).where(eq(projectTags.projectId, Number(id)));
+            // Insertar nuevas relaciones
+            if (tags.length > 0) {
+                const tagAssociations = tags.map((tagId) => ({
+                    projectId: Number(id),
+                    tagId: Number(tagId),
+                }));
+                yield db.insert(projectTags).values(tagAssociations);
+            }
+        }
+        // Actualizar imágenes sin modificar la relación
+        // Obtener la imagen actual del proyecto
+        const existingImage = yield db
+            .select({ imageId: projectImages.imageId })
+            .from(projectImages)
+            .where(eq(projectImages.projectId, Number(id)))
+            .limit(1);
+        // Convertir requestImages en un objeto (si es un array, tomar el primero)
+        if ((requestImages === null || requestImages === void 0 ? void 0 : requestImages.url) && (requestImages === null || requestImages === void 0 ? void 0 : requestImages.publicId)) {
+            const imageId = (_a = existingImage[0]) === null || _a === void 0 ? void 0 : _a.imageId;
+            if (imageId !== null && imageId !== undefined) {
+                // Si ya hay una imagen, actualizarla
+                yield db
+                    .update(images)
+                    .set({ url: requestImages.url, publicId: requestImages.publicId })
+                    .where(eq(images.id, imageId));
+            }
+        }
+        // Actualizar miembros
+        if (Array.isArray(requestMembers)) {
+            const currentMemberIds = new Set((yield db
+                .select({ memberId: projectMembers.memberId })
+                .from(projectMembers)
+                .where(eq(projectMembers.projectId, Number(id))))
+                .map((m) => m.memberId)
+                .filter((id) => id !== null) // Filtramos nulls
+            );
+            const newMemberIds = new Set(requestMembers.map(Number).filter((id) => !isNaN(id)));
+            // Miembros a eliminar
+            const membersToRemove = [...currentMemberIds].filter((id) => !newMemberIds.has(id));
+            if (membersToRemove.length > 0) {
+                yield db
+                    .delete(projectMembers)
+                    .where(inArray(projectMembers.memberId, membersToRemove));
+            }
+            // Miembros a agregar
+            const membersToAdd = [...newMemberIds].filter((id) => !currentMemberIds.has(id));
+            if (membersToAdd.length > 0) {
+                const memberRecords = yield db
+                    .select({ id: members.id, userId: members.userId })
+                    .from(members)
+                    .where(inArray(members.id, membersToAdd));
+                // Obtener usuarios con invitaciones pendientes para este proyecto
+                const existingInvitations = new Set((yield db
+                    .select({ userId: notifications.userId })
+                    .from(notifications)
+                    .where(and(eq(notifications.entityId, Number(id)), // Mismo proyecto
+                eq(notifications.type, "project_invite"), // Mismo tipo de notificación
+                eq(notifications.status, "pending"), // No ha sido aceptada/rechazada
+                inArray(notifications.userId, memberRecords.map((m) => m.userId) // Usuarios que queremos invitar
+                )))).map((n) => n.userId) // Guardamos los userId con invitación pendiente
+                );
+                // Filtrar solo los que NO tienen invitación pendiente
+                const notificationsToInsert = memberRecords
+                    .filter((member) => !existingInvitations.has(member.userId))
+                    .map((member) => ({
+                    userId: member.userId,
+                    senderId: existingProject[0].userId,
+                    type: "project_invite",
+                    entityId: Number(id),
+                    message: `Te han invitado a unirte al proyecto \"${existingProject[0].title}\".`,
+                    status: "pending",
+                }));
+                // Insertar solo si hay nuevas invitaciones
+                if (notificationsToInsert.length > 0) {
+                    yield db.insert(notifications).values(notificationsToInsert);
+                }
+            }
+        }
+        res.status(200).json({ message: "Proyecto actualizado correctamente" });
+    }
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al actualizar el proyecto" });
+    }
+}));
+projectRouter.delete("/project/:id", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = req.params;
+        const { RefreshToken } = req.cookies;
+        if (!RefreshToken) {
+            res.status(401).json({ error: "Acceso no autorizado" });
+            return;
+        }
+        const projectId = Number(id);
+        // 1. Eliminar imágenes asociadas al proyecto
+        const imagesToDelete = yield db
+            .select({ id: projectImages.imageId })
+            .from(projectImages)
+            .where(eq(projectImages.projectId, projectId));
+        if (imagesToDelete.length > 0) {
+            const imageIds = imagesToDelete.map((img) => img.id);
+            const validImageIds = imageIds.filter((id) => id !== null);
+            if (validImageIds.length > 0) {
+                yield db.delete(images).where(inArray(images.id, validImageIds));
+            }
+        }
+        // 2. Eliminar notificaciones asociadas al proyecto
+        yield db.delete(notifications).where(eq(notifications.entityId, projectId));
+        // 3. Eliminar el proyecto (el cascade se encarga de relaciones restantes)
+        yield db.delete(projects).where(eq(projects.id, projectId));
+        res.status(200).json({ message: "Proyecto eliminado correctamente" });
+    }
+    catch (error) {
+        console.error("Error eliminando proyecto:", error);
+        res.status(500).json({ error: "Error al eliminar el proyecto" });
+    }
+}));
+// Visibility
+projectRouter.patch("/project/:id/visibility", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = req.params;
+        const { RefreshToken } = req.cookies;
+        const { hidden } = req.body;
+        if (!RefreshToken) {
+            res.status(401).json({ error: "Acceso no autorizado" });
+            return;
+        }
+        if (typeof hidden !== "boolean") {
+            res
+                .status(400)
+                .json({ error: "Parámetro 'hidden' inválido o faltante" });
+            return;
+        }
+        // Verificar existencia del proyecto
+        const existingProject = yield db
+            .select()
+            .from(projects)
+            .where(eq(projects.id, Number(id)))
+            .limit(1);
+        if (!existingProject.length) {
+            res.status(404).json({ error: "Proyecto no encontrado" });
+            return;
+        }
+        // Actualizar solo el campo hidden
+        const updatedProject = yield db
+            .update(projects)
+            .set({ hidden })
+            .where(eq(projects.id, Number(id)))
+            .returning({
+            id: projects.id,
+            title: projects.title,
+            hidden: projects.hidden,
+            userId: projects.userId,
+        });
+        res.status(200).json({
+            message: "Visibilidad del proyecto actualizada",
+            project: updatedProject[0],
+        });
+    }
+    catch (error) {
+        console.error(error);
+        res
+            .status(500)
+            .json({ error: "Error al actualizar la visibilidad del proyecto" });
     }
 }));

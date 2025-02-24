@@ -16,6 +16,12 @@ soundRouter.post(
   upload.single("sound"),
   async (req: Request, res: Response) => {
     try {
+      const { RefreshToken } = req.cookies;
+      if (!RefreshToken) {
+        res.status(401).json({ error: "Unauthorized access" });
+        return;
+      }
+
       if (!req.file) {
         res.status(400).json({ error: "No se ha adjuntado ningún sonido" });
         return;

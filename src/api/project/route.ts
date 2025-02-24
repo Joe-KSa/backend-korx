@@ -567,7 +567,7 @@ projectRouter.get(
         .leftJoin(images, eq(memberImages.imageId, images.id))
         .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
         .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
-        .leftJoin(memberTags, eq(projectMembers.id, memberTags.memberId))
+        .leftJoin(memberTags, eq(members.id, memberTags.memberId))
         .leftJoin(tags, eq(memberTags.tagId, tags.id))
         .where(eq(projectMembers.projectId, projectId))
         .orderBy(orderDirection(orderField));

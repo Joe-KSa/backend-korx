@@ -56,8 +56,8 @@ export class Server {
             res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
             res.sendStatus(200);
         });
-        this.app.use(express.json({ limit: "3mb" })); // Aumenta el límite del body JSON
-        this.app.use(express.urlencoded({ limit: "3mb", extended: true })); // Para datos de formularios grandes
+        this.app.use(express.json({ limit: "10mb" })); // Aumenta el límite del body JSON
+        this.app.use(express.urlencoded({ limit: "10mb", extended: true })); // Para datos de formularios grandes
         this.app.use(cookieParser()); // Habilita cookies
     }
     routes() {

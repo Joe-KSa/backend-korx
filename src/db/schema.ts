@@ -17,9 +17,6 @@ export const members = sqliteTable(
       .references((): AnySQLiteColumn => users.id, { onDelete: "cascade" }),
     name: text("name", { length: 100 }).notNull(),
     username: text("username", { length: 50 }).notNull().unique(),
-    roleId: integer("role_id").references((): AnySQLiteColumn => roles.id, {
-      onDelete: "cascade",
-    }),
     description: text("description", { length: 255 }).default(""),
     github: text("github", { length: 255 }).default(""),
     phrase: text("phrase", { length: 255 }).default(""),
@@ -36,7 +33,6 @@ export const members = sqliteTable(
   },
   (table) => ({
     nameIndex: index("idx_members_name").on(table.name),
-    roleIdIndex: index("idx_members_role_id").on(table.roleId),
     userIdIndex: index("idx_members_user_id").on(table.userId),
   })
 );
@@ -169,7 +165,7 @@ export const roles = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     name: text("name", { length: 50 }).notNull(),
-    priority: integer("priority").notNull().default(1)
+    priority: integer("priority").notNull().default(1),
   },
   (table) => ({
     roleIndex: index("idx_roles_name").on(table.name),
@@ -417,7 +413,6 @@ export const projectMembers = sqliteTable(
     ).on(table.projectId, table.memberId, table.roleId),
   })
 );
-
 
 // Notifications
 

@@ -13,7 +13,7 @@ import checkAuth from "../../middleware/checkAuth.js";
 import multer from "multer";
 const upload = multer();
 export const uploadRouter = express.Router();
-uploadRouter.post("/upload", checkAuth, upload.single("image"), // Procesa un solo archivo con el nombre "image"
+uploadRouter.post("/upload", checkAuth, upload.single("file"), // Cambia "image" por "file" para aceptar ambos tipos
 (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { RefreshToken } = req.cookies;
@@ -22,21 +22,34 @@ uploadRouter.post("/upload", checkAuth, upload.single("image"), // Procesa un so
             return;
         }
         if (!req.file) {
-            res.status(400).json({ error: "No se ha adjuntado ninguna imagen" });
+            res.status(400).json({ error: "No se ha adjuntado ningún archivo" });
             return;
         }
         const buffer = req.file.buffer;
-        // Subir la imagen a Cloudinary
+        const mimeType = req.file.mimetype;
+        // Determinar si es imagen o video
+        const resourceType = mimeType.startsWith("image/")
+            ? mimeType === "image/gif"
+                ? "image"
+                : "image"
+            : mimeType.startsWith("video/")
+                ? "video"
+                : null;
+        if (!resourceType) {
+            res.status(400).json({ error: "Formato de archivo no permitido" });
+            return;
+        }
+        // Subir el archivo a Cloudinary
         const response = yield Cloudinary.uploadToCloudinary(buffer, req.file.originalname);
         res.json({
-            message: "Imagen subida exitosamente",
+            message: "Archivo subido exitosamente",
             publicId: response.public_id,
             url: response.secure_url,
         });
     }
     catch (e) {
         console.error(e);
-        res.status(500).json({ error: "Hubo un error al subir la imagen" });
+        res.status(500).json({ error: "Hubo un error al subir el archivo" });
     }
 }));
 uploadRouter.delete("/upload", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {

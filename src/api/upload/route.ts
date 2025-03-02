@@ -10,7 +10,7 @@ export const uploadRouter = express.Router();
 uploadRouter.post(
   "/upload",
   checkAuth,
-  upload.single("image"), // Procesa un solo archivo con el nombre "image"
+  upload.single("file"), // Cambia "image" por "file" para aceptar ambos tipos
   async (req: Request, res: Response) => {
     try {
       const { RefreshToken } = req.cookies;
@@ -21,26 +21,41 @@ uploadRouter.post(
       }
 
       if (!req.file) {
-        res.status(400).json({ error: "No se ha adjuntado ninguna imagen" });
+        res.status(400).json({ error: "No se ha adjuntado ningún archivo" });
         return;
       }
 
       const buffer = req.file.buffer;
+      const mimeType = req.file.mimetype;
 
-      // Subir la imagen a Cloudinary
+      // Determinar si es imagen o video
+      const resourceType = mimeType.startsWith("image/")
+        ? mimeType === "image/gif"
+          ? "image"
+          : "image"
+        : mimeType.startsWith("video/")
+        ? "video"
+        : null;
+
+      if (!resourceType) {
+        res.status(400).json({ error: "Formato de archivo no permitido" });
+        return;
+      }
+
+      // Subir el archivo a Cloudinary
       const response = await Cloudinary.uploadToCloudinary(
         buffer,
         req.file.originalname
       );
 
       res.json({
-        message: "Imagen subida exitosamente",
+        message: "Archivo subido exitosamente",
         publicId: (response as any).public_id,
         url: (response as any).secure_url,
       });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ error: "Hubo un error al subir la imagen" });
+      res.status(500).json({ error: "Hubo un error al subir el archivo" });
     }
   }
 );

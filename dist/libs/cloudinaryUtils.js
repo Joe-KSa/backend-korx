@@ -16,7 +16,10 @@ export class Cloudinary {
             const uniqueId = randomUUID();
             return new Promise((resolve, reject) => {
                 cloudinary.uploader
-                    .upload_stream({ public_id: `korxteam/${uniqueId}-${safeFileName}` }, (error, result) => {
+                    .upload_stream({
+                    public_id: `korxteam/${uniqueId}-${safeFileName}`,
+                    resource_type: "auto" // Permite subir imágenes y videos
+                }, (error, result) => {
                     if (error) {
                         reject(error);
                     }

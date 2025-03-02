@@ -18,6 +18,9 @@ export const members = sqliteTable(
     name: text("name", { length: 100 }).notNull(),
     username: text("username", { length: 50 }).notNull().unique(),
     description: text("description", { length: 255 }).default(""),
+    roleId: integer("role_id").references(() => roles.id, {
+      onDelete: "cascade",
+    }),
     github: text("github", { length: 255 }).default(""),
     phrase: text("phrase", { length: 255 }).default(""),
     primaryColor: text("primaryColor", { length: 7 }).default(""),
@@ -34,6 +37,19 @@ export const members = sqliteTable(
   (table) => ({
     nameIndex: index("idx_members_name").on(table.name),
     userIdIndex: index("idx_members_user_id").on(table.userId),
+  })
+);
+
+// Permssions
+export const roles = sqliteTable(
+  "roles",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name", { length: 50 }).notNull(),
+    priority: integer("priority").notNull().default(1),
+  },
+  (table) => ({
+    roleIndex: index("idx_roles_name").on(table.name),
   })
 );
 
@@ -158,19 +174,6 @@ export const users = sqliteTable("users", {
     .default(sql`CURRENT_TIMESTAMP`)
     .$onUpdate(() => sql`CURRENT_TIMESTAMP`),
 });
-
-// Permssions
-export const roles = sqliteTable(
-  "roles",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    name: text("name", { length: 50 }).notNull(),
-    priority: integer("priority").notNull().default(1),
-  },
-  (table) => ({
-    roleIndex: index("idx_roles_name").on(table.name),
-  })
-);
 
 export const permissions = sqliteTable(
   "permissions",

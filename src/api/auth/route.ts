@@ -218,7 +218,6 @@ authRouter.get(
             userId: id,
             name: global_name || "",
             username: username || "",
-            roleId: defaultRole.id,
             description: "",
             hidden: false,
             github: "",

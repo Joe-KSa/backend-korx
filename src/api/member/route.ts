@@ -354,7 +354,8 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
         createdAt: members.createdAt,
       })
       .from(members)
-      .leftJoin(roles, eq(members.roleId, roles.id))
+      .leftJoin(users, eq(users.id, members.userId))
+      .leftJoin(roles, eq(users.roleId, roles.id))
       .leftJoin(memberTags, eq(members.id, memberTags.memberId))
       .leftJoin(tags, eq(memberTags.tagId, tags.id))
       .leftJoin(memberImages, eq(members.id, memberImages.memberId))

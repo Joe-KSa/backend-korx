@@ -33,16 +33,16 @@ export class Cloudinary {
     }
     static deleteFromCloudinary(publicId) {
         return __awaiter(this, void 0, void 0, function* () {
-            return new Promise((resolve, reject) => {
-                cloudinary.uploader.destroy(publicId, (error, result) => {
-                    if (error) {
-                        reject(error);
-                    }
-                    else {
-                        resolve(result);
-                    }
-                });
-            });
+            try {
+                let response = yield cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+                if (response.result === "not found") {
+                    response = yield cloudinary.uploader.destroy(publicId, { resource_type: "video" });
+                }
+                return response;
+            }
+            catch (error) {
+                throw error;
+            }
         });
     }
 }

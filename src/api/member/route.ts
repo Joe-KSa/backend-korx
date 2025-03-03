@@ -177,6 +177,7 @@ memberRouter.put(
         description,
         tags,
         github,
+        phrase,
         primaryColor,
         secondaryColor,
         sound,
@@ -187,6 +188,7 @@ memberRouter.put(
       if (name) updateData.name = name;
       if (description !== undefined) updateData.description = description;
       if (github !== undefined) updateData.github = github;
+      if (phrase !== undefined ) updateData.phrase = phrase;
       if (primaryColor !== undefined) updateData.primaryColor = primaryColor;
       if (secondaryColor !== undefined)
         updateData.secondaryColor = secondaryColor;

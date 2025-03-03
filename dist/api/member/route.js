@@ -146,7 +146,7 @@ memberRouter.put("/member/:id", checkAuth, (req, res) => __awaiter(void 0, void 
             res.status(400).send("Invalid ID");
             return;
         }
-        const { name, description, tags, github, primaryColor, secondaryColor, sound, images: requestImages, } = req.body;
+        const { name, description, tags, github, phrase, primaryColor, secondaryColor, sound, images: requestImages, } = req.body;
         const updateData = {};
         if (name)
             updateData.name = name;
@@ -154,6 +154,8 @@ memberRouter.put("/member/:id", checkAuth, (req, res) => __awaiter(void 0, void 
             updateData.description = description;
         if (github !== undefined)
             updateData.github = github;
+        if (phrase !== undefined)
+            updateData.phrase = phrase;
         if (primaryColor !== undefined)
             updateData.primaryColor = primaryColor;
         if (secondaryColor !== undefined)

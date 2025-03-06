@@ -100,3 +100,22 @@ export interface TagProjectEntry extends Tag {
 export interface ImageProjectEntry extends Omit<Image, "id"> {
   projectId: number | null;
 }
+
+
+export interface TopLevelCommentResponse {
+  id: number;
+  author: { username: string; avatar: string };
+  content: string;
+  parentId: null;
+  replies: ReplyCommentResponse[];
+}
+
+export interface ReplyCommentResponse {
+  id: number;
+  author: { username: string; avatar: string };
+  content: string;
+  parentId: number;
+  replyTo?: string;
+}
+
+export type CommentResponse = TopLevelCommentResponse | ReplyCommentResponse;

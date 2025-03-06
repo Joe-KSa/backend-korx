@@ -268,6 +268,40 @@ export const projects = sqliteTable(
   })
 );
 
+//Comentarios
+export const comments = sqliteTable(
+  "comments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    // Relaciona el comentario con un proyecto
+    projectId: integer("project_id")
+      .notNull()
+      .references((): AnySQLiteColumn => projects.id, { onDelete: "cascade" }),
+    // Relaciona el comentario con el autor (en este caso, referenciamos a la tabla users)
+    authorId: text("author_id")
+      .notNull()
+      .references((): AnySQLiteColumn => users.id, { onDelete: "cascade" }),
+    // Contenido del comentario
+    content: text("content", { length: 500 }).notNull(),
+    // Para comentarios anidados (opcional)
+    parentId: integer("parent_id").references(
+      (): AnySQLiteColumn => comments.id,
+      { onDelete: "cascade" }
+    ),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`)
+      .$onUpdate(() => sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    projectIndex: index("idx_comments_project_id").on(table.projectId),
+    parentIndex: index("idx_comments_parent_id").on(table.parentId),
+  })
+);
+
 export const projectImages = sqliteTable(
   "project_images",
   {

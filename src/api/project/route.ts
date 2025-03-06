@@ -4,6 +4,7 @@ import { db } from "../../db/index.js";
 import {
   projects,
   tags,
+  comments,
   projectTags,
   members,
   projectMembers,
@@ -18,7 +19,14 @@ import {
   memberTags,
 } from "../../db/schema.js";
 import { eq, inArray, and, SQL, sql, asc, desc } from "drizzle-orm";
-import type { ProjectEntry, Tag, Member } from "../../core/types.js";
+import type {
+  ProjectEntry,
+  Tag,
+  Member,
+  CommentResponse,
+  TopLevelCommentResponse,
+  ReplyCommentResponse,
+} from "../../core/types.js";
 import checkAuth from "../../middleware/checkAuth.js";
 import { redisClient } from "../../config/redis.config.js";
 
@@ -62,6 +70,7 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
         soundPath: sounds.path,
         soundType: memberSounds.type,
         hidden: projects.hidden,
+        createdAt: projectImages.createdAt
       })
       .from(projects)
       .leftJoin(users, eq(projects.userId, users.id))
@@ -74,7 +83,8 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
       .leftJoin(roles, eq(projectMembers.roleId, roles.id))
       .leftJoin(memberImages, eq(members.id, memberImages.memberId))
       .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
-      .leftJoin(sounds, eq(memberSounds.soundId, sounds.id));
+      .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
+      .orderBy(desc(projects.createdAt))
 
     const projectsMap = new Map<number, ProjectEntry>();
 
@@ -175,11 +185,11 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
 });
 
 projectRouter.get(
-  "/project/:id",
+  "/project/:projectId",
   checkAuth,
   async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const projectId = Number(req.params.projectId);
       const { RefreshToken } = req.cookies;
 
       if (!RefreshToken) {
@@ -237,7 +247,7 @@ projectRouter.get(
         .leftJoin(memberImages, eq(members.id, memberImages.memberId))
         .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
         .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
-        .where(eq(projects.id, Number(id)));
+        .where(eq(projects.id, projectId));
 
       if (!rawData.length) {
         res.status(404).json({ error: "Proyecto no encontrado" });
@@ -355,7 +365,6 @@ projectRouter.post("/project", async (req: Request, res: Response) => {
       return;
     }
 
-
     const {
       creator,
       title,
@@ -379,19 +388,16 @@ projectRouter.post("/project", async (req: Request, res: Response) => {
       return current
     `;
 
-    const projectCount = await redisClient.eval(
-      limitScript,
-      {
-        keys: [redisKey],
-      }
-    );
+    const projectCount = await redisClient.eval(limitScript, {
+      keys: [redisKey],
+    });
 
     const count = Number(projectCount ?? 0);
 
     if (count > 2) {
       res.status(429).json({
         error: "Límite excedido: Máximo 2 proyectos por día",
-        resetIn: await redisClient.ttl(redisKey)
+        resetIn: await redisClient.ttl(redisKey),
       });
       return;
     }
@@ -515,9 +521,9 @@ projectRouter.post("/project", async (req: Request, res: Response) => {
 });
 
 projectRouter.get(
-  "/project/:id/members",
+  "/project/:projectId/members",
   async (req: Request, res: Response) => {
-    const projectId = Number(req.params.id);
+    const projectId = Number(req.params.projectId);
     if (isNaN(projectId)) {
       res.status(400).json({ error: "ID de proyecto inválido" });
       return;
@@ -639,218 +645,228 @@ projectRouter.get(
   }
 );
 
-projectRouter.put("/project/:id", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { RefreshToken } = req.cookies;
-    const {
-      title,
-      description,
-      repository,
-      url,
-      images: requestImages,
-      members: requestMembers,
-      tags,
-    } = req.body;
+projectRouter.put(
+  "/project/:projectId",
+  async (req: Request, res: Response) => {
+    try {
+      const projectId = Number(req.params.projectId);
+      const { RefreshToken } = req.cookies;
+      const {
+        title,
+        description,
+        repository,
+        url,
+        images: requestImages,
+        members: requestMembers,
+        tags,
+      } = req.body;
 
-    if (!RefreshToken) {
-      res.status(401).json({ error: "Unauthorized access" });
-      return;
-    }
-
-    // Obtener el proyecto actual
-    const existingProject = await db
-      .select()
-      .from(projects)
-      .where(eq(projects.id, Number(id)))
-      .limit(1);
-
-    if (!existingProject.length) {
-      res.status(404).json({ error: "Proyecto no encontrado" });
-      return;
-    }
-
-    // Construir objeto de actualización evitando sobreescribir todos los valores
-    const updatedFields: Partial<typeof projects.$inferSelect> = {
-      hidden: true, // Ocultar proyecto para revision
-    };
-    if (title) updatedFields.title = title;
-    if (description) updatedFields.description = description;
-    if (repository) updatedFields.repository = repository;
-    if (url) updatedFields.url = url;
-
-    if (Object.keys(updatedFields).length > 0) {
-      await db
-        .update(projects)
-        .set(updatedFields)
-        .where(eq(projects.id, Number(id)));
-    }
-
-    // Actualizar tags
-    if (Array.isArray(tags)) {
-      // Eliminar relaciones actuales de tags con el proyecto
-      await db.delete(projectTags).where(eq(projectTags.projectId, Number(id)));
-
-      // Insertar nuevas relaciones
-      if (tags.length > 0) {
-        const tagAssociations = tags.map((tagId) => ({
-          projectId: Number(id),
-          tagId: Number(tagId),
-        }));
-
-        await db.insert(projectTags).values(tagAssociations);
+      if (!RefreshToken) {
+        res.status(401).json({ error: "Unauthorized access" });
+        return;
       }
-    }
 
-    // Actualizar imágenes sin modificar la relación
-    // Obtener la imagen actual del proyecto
-    const existingImage = await db
-      .select({ imageId: projectImages.imageId })
-      .from(projectImages)
-      .where(eq(projectImages.projectId, Number(id)))
-      .limit(1);
+      // Obtener el proyecto actual
+      const existingProject = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
 
-    // Convertir requestImages en un objeto (si es un array, tomar el primero)
+      if (!existingProject.length) {
+        res.status(404).json({ error: "Proyecto no encontrado" });
+        return;
+      }
 
-    if (requestImages?.url && requestImages?.publicId) {
-      const imageId = existingImage[0]?.imageId;
+      // Construir objeto de actualización evitando sobreescribir todos los valores
+      const updatedFields: Partial<typeof projects.$inferSelect> = {
+        hidden: true, // Ocultar proyecto para revision
+      };
+      if (title) updatedFields.title = title;
+      if (description) updatedFields.description = description;
+      if (repository) updatedFields.repository = repository;
+      if (url) updatedFields.url = url;
 
-      if (imageId !== null && imageId !== undefined) {
-        // Si ya hay una imagen, actualizarla
+      if (Object.keys(updatedFields).length > 0) {
         await db
-          .update(images)
-          .set({ url: requestImages.url, publicId: requestImages.publicId })
-          .where(eq(images.id, imageId));
+          .update(projects)
+          .set(updatedFields)
+          .where(eq(projects.id, projectId));
       }
-    }
 
-    // Actualizar miembros
-    if (Array.isArray(requestMembers)) {
-      const currentMemberIds = new Set(
-        (
-          await db
-            .select({ memberId: projectMembers.memberId })
-            .from(projectMembers)
-            .where(eq(projectMembers.projectId, Number(id)))
-        )
-          .map((m) => m.memberId)
-          .filter((id): id is number => id !== null) // Filtramos nulls
-      );
-      const newMemberIds = new Set(
-        requestMembers.map(Number).filter((id): id is number => !isNaN(id))
-      );
-
-      // Miembros a eliminar
-      const membersToRemove = [...currentMemberIds].filter(
-        (id) => !newMemberIds.has(id)
-      );
-      if (membersToRemove.length > 0) {
+      // Actualizar tags
+      if (Array.isArray(tags)) {
+        // Eliminar relaciones actuales de tags con el proyecto
         await db
-          .delete(projectMembers)
-          .where(inArray(projectMembers.memberId, membersToRemove));
-      }
-      // Miembros a agregar
-      const membersToAdd = [...newMemberIds].filter(
-        (id) => !currentMemberIds.has(id)
-      );
-      if (membersToAdd.length > 0) {
-        const memberRecords = await db
-          .select({ id: members.id, userId: members.userId })
-          .from(members)
-          .where(inArray(members.id, membersToAdd));
+          .delete(projectTags)
+          .where(eq(projectTags.projectId, projectId));
 
-        // Obtener usuarios con invitaciones pendientes para este proyecto
-        const existingInvitations = new Set(
-          (
-            await db
-              .select({ userId: notifications.userId })
-              .from(notifications)
-              .where(
-                and(
-                  eq(notifications.entityId, Number(id)), // Mismo proyecto
-                  eq(notifications.type, "project_invite"), // Mismo tipo de notificación
-                  eq(notifications.status, "pending"), // No ha sido aceptada/rechazada
-                  inArray(
-                    notifications.userId,
-                    memberRecords.map((m) => m.userId) // Usuarios que queremos invitar
-                  )
-                )
-              )
-          ).map((n) => n.userId) // Guardamos los userId con invitación pendiente
-        );
-
-        // Filtrar solo los que NO tienen invitación pendiente
-        const notificationsToInsert = memberRecords
-          .filter((member) => !existingInvitations.has(member.userId))
-          .map((member) => ({
-            userId: member.userId,
-            senderId: existingProject[0].userId,
-            type: "project_invite",
-            entityId: Number(id),
-            message: `Te han invitado a unirte al proyecto \"${existingProject[0].title}\".`,
-            status: "pending",
+        // Insertar nuevas relaciones
+        if (tags.length > 0) {
+          const tagAssociations = tags.map((tagId) => ({
+            projectId: projectId,
+            tagId: Number(tagId),
           }));
 
-        // Insertar solo si hay nuevas invitaciones
-        if (notificationsToInsert.length > 0) {
-          await db.insert(notifications).values(notificationsToInsert);
+          await db.insert(projectTags).values(tagAssociations);
         }
       }
-    }
 
-    res.status(200).json({ message: "Proyecto actualizado correctamente" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Error al actualizar el proyecto" });
-  }
-});
+      // Actualizar imágenes sin modificar la relación
+      // Obtener la imagen actual del proyecto
+      const existingImage = await db
+        .select({ imageId: projectImages.imageId })
+        .from(projectImages)
+        .where(eq(projectImages.projectId, projectId))
+        .limit(1);
 
-projectRouter.delete("/project/:id", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { RefreshToken } = req.cookies;
+      // Convertir requestImages en un objeto (si es un array, tomar el primero)
 
-    if (!RefreshToken) {
-      res.status(401).json({ error: "Acceso no autorizado" });
-      return;
-    }
+      if (requestImages?.url && requestImages?.publicId) {
+        const imageId = existingImage[0]?.imageId;
 
-    const projectId = Number(id);
-
-    // 1. Eliminar imágenes asociadas al proyecto
-    const imagesToDelete = await db
-      .select({ id: projectImages.imageId })
-      .from(projectImages)
-      .where(eq(projectImages.projectId, projectId));
-
-    if (imagesToDelete.length > 0) {
-      const imageIds = imagesToDelete.map((img) => img.id);
-      const validImageIds = imageIds.filter((id): id is number => id !== null);
-
-      if (validImageIds.length > 0) {
-        await db.delete(images).where(inArray(images.id, validImageIds));
+        if (imageId !== null && imageId !== undefined) {
+          // Si ya hay una imagen, actualizarla
+          await db
+            .update(images)
+            .set({ url: requestImages.url, publicId: requestImages.publicId })
+            .where(eq(images.id, imageId));
+        }
       }
+
+      // Actualizar miembros
+      if (Array.isArray(requestMembers)) {
+        const currentMemberIds = new Set(
+          (
+            await db
+              .select({ memberId: projectMembers.memberId })
+              .from(projectMembers)
+              .where(eq(projectMembers.projectId, projectId))
+          )
+            .map((m) => m.memberId)
+            .filter((id): id is number => id !== null) // Filtramos nulls
+        );
+        const newMemberIds = new Set(
+          requestMembers.map(Number).filter((id): id is number => !isNaN(id))
+        );
+
+        // Miembros a eliminar
+        const membersToRemove = [...currentMemberIds].filter(
+          (id) => !newMemberIds.has(id)
+        );
+        if (membersToRemove.length > 0) {
+          await db
+            .delete(projectMembers)
+            .where(inArray(projectMembers.memberId, membersToRemove));
+        }
+        // Miembros a agregar
+        const membersToAdd = [...newMemberIds].filter(
+          (id) => !currentMemberIds.has(id)
+        );
+        if (membersToAdd.length > 0) {
+          const memberRecords = await db
+            .select({ id: members.id, userId: members.userId })
+            .from(members)
+            .where(inArray(members.id, membersToAdd));
+
+          // Obtener usuarios con invitaciones pendientes para este proyecto
+          const existingInvitations = new Set(
+            (
+              await db
+                .select({ userId: notifications.userId })
+                .from(notifications)
+                .where(
+                  and(
+                    eq(notifications.entityId, projectId), // Mismo proyecto
+                    eq(notifications.type, "project_invite"), // Mismo tipo de notificación
+                    eq(notifications.status, "pending"), // No ha sido aceptada/rechazada
+                    inArray(
+                      notifications.userId,
+                      memberRecords.map((m) => m.userId) // Usuarios que queremos invitar
+                    )
+                  )
+                )
+            ).map((n) => n.userId) // Guardamos los userId con invitación pendiente
+          );
+
+          // Filtrar solo los que NO tienen invitación pendiente
+          const notificationsToInsert = memberRecords
+            .filter((member) => !existingInvitations.has(member.userId))
+            .map((member) => ({
+              userId: member.userId,
+              senderId: existingProject[0].userId,
+              type: "project_invite",
+              entityId: projectId,
+              message: `Te han invitado a unirte al proyecto \"${existingProject[0].title}\".`,
+              status: "pending",
+            }));
+
+          // Insertar solo si hay nuevas invitaciones
+          if (notificationsToInsert.length > 0) {
+            await db.insert(notifications).values(notificationsToInsert);
+          }
+        }
+      }
+
+      res.status(200).json({ message: "Proyecto actualizado correctamente" });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Error al actualizar el proyecto" });
     }
-
-    // 2. Eliminar notificaciones asociadas al proyecto
-    await db.delete(notifications).where(eq(notifications.entityId, projectId));
-
-    // 3. Eliminar el proyecto (el cascade se encarga de relaciones restantes)
-    await db.delete(projects).where(eq(projects.id, projectId));
-
-    res.status(200).json({ message: "Proyecto eliminado correctamente" });
-  } catch (error) {
-    console.error("Error eliminando proyecto:", error);
-    res.status(500).json({ error: "Error al eliminar el proyecto" });
   }
-});
+);
+
+projectRouter.delete(
+  "/project/:projectId",
+  async (req: Request, res: Response) => {
+    try {
+      const projectId = Number(req.params.projectId);
+      const { RefreshToken } = req.cookies;
+
+      if (!RefreshToken) {
+        res.status(401).json({ error: "Acceso no autorizado" });
+        return;
+      }
+
+      // 1. Eliminar imágenes asociadas al proyecto
+      const imagesToDelete = await db
+        .select({ id: projectImages.imageId })
+        .from(projectImages)
+        .where(eq(projectImages.projectId, projectId));
+
+      if (imagesToDelete.length > 0) {
+        const imageIds = imagesToDelete.map((img) => img.id);
+        const validImageIds = imageIds.filter(
+          (id): id is number => id !== null
+        );
+
+        if (validImageIds.length > 0) {
+          await db.delete(images).where(inArray(images.id, validImageIds));
+        }
+      }
+
+      // 2. Eliminar notificaciones asociadas al proyecto
+      await db
+        .delete(notifications)
+        .where(eq(notifications.entityId, projectId));
+
+      // 3. Eliminar el proyecto (el cascade se encarga de relaciones restantes)
+      await db.delete(projects).where(eq(projects.id, projectId));
+
+      res.status(200).json({ message: "Proyecto eliminado correctamente" });
+    } catch (error) {
+      console.error("Error eliminando proyecto:", error);
+      res.status(500).json({ error: "Error al eliminar el proyecto" });
+    }
+  }
+);
 
 // Visibility
 projectRouter.patch(
-  "/project/:id/visibility",
+  "/project/:projectId/visibility",
   async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const projectId = Number(req.params.projectId);
       const { RefreshToken } = req.cookies;
       const { hidden } = req.body;
 
@@ -870,7 +886,7 @@ projectRouter.patch(
       const existingProject = await db
         .select()
         .from(projects)
-        .where(eq(projects.id, Number(id)))
+        .where(eq(projects.id, projectId))
         .limit(1);
 
       if (!existingProject.length) {
@@ -882,7 +898,7 @@ projectRouter.patch(
       const updatedProject = await db
         .update(projects)
         .set({ hidden })
-        .where(eq(projects.id, Number(id)))
+        .where(eq(projects.id, projectId))
         .returning({
           id: projects.id,
           title: projects.title,
@@ -899,6 +915,227 @@ projectRouter.patch(
       res
         .status(500)
         .json({ error: "Error al actualizar la visibilidad del proyecto" });
+    }
+  }
+);
+
+projectRouter.get(
+  "/project/:projectId/comments",
+  async (req: Request, res: Response) => {
+    const projectId = parseInt(req.params.projectId);
+
+    if (isNaN(projectId)) {
+      res.status(400).json({ error: "Project id inválido" });
+      return;
+    }
+
+    try {
+      // Traemos todos los comentarios para el proyecto.
+      const rawComments = await db
+        .select({
+          id: comments.id,
+          projectId: comments.projectId,
+          username: users.username,
+          content: comments.content,
+          parentId: comments.parentId,
+          avatar: users.image,
+          createdAt: comments.createdAt,
+        })
+        .from(comments)
+        .leftJoin(users, eq(comments.authorId, users.id))
+        .leftJoin(members, eq(members.userId, users.id))
+        .where(eq(comments.projectId, projectId))
+        .orderBy(comments.createdAt);
+
+      // Usamos un map para relacionar cada comentario.
+      const commentMap: { [key: number]: CommentResponse } = {};
+      const topLevelComments: TopLevelCommentResponse[] = [];
+
+      // Creamos la estructura base para cada comentario.
+      for (const row of rawComments) {
+        if (!row.parentId) {
+          // Comentario de primer nivel
+          const comment: TopLevelCommentResponse = {
+            id: row.id,
+            author: { username: row.username || "", avatar: row.avatar || "" },
+            content: row.content,
+            parentId: null,
+            replies: [], // Solo en primer nivel
+          };
+          commentMap[row.id] = comment;
+          topLevelComments.push(comment);
+        } else {
+          // Reply: no incluye el campo "replies"
+          const comment: ReplyCommentResponse = {
+            id: row.id,
+            author: { username: row.username || "", avatar: row.avatar || "" },
+            content: row.content,
+            parentId: row.parentId,
+          };
+          commentMap[row.id] = comment;
+        }
+      }
+
+      // Asignamos cada reply a su comentario de nivel superior y agregamos "replyTo" solo si no es respuesta directa al comentario principal.
+      for (const row of rawComments) {
+        if (row.parentId) {
+          // Obtenemos el comentario inmediato al que se responde.
+          const immediateParent = commentMap[row.parentId];
+          // Buscamos el comentario de primer nivel recorriendo la cadena.
+          let topLevelParent = immediateParent;
+          while (topLevelParent.parentId !== null) {
+            topLevelParent = commentMap[topLevelParent.parentId];
+          }
+          // Obtenemos el reply actual.
+          const reply = commentMap[row.id] as ReplyCommentResponse;
+          // Si el comentario inmediato NO es de primer nivel, entonces es una respuesta a otro reply.
+          if (immediateParent.parentId !== null) {
+            reply.replyTo = immediateParent.author.username;
+          }
+          // Agregamos el reply a la lista de respuestas del comentario de primer nivel.
+          topLevelParent.replies.push(reply);
+        }
+      }
+
+      res.status(200).json(topLevelComments);
+    } catch (error) {
+      console.error("Error al obtener comentarios del proyecto:", error);
+      res.status(500).json({ error: "Error al obtener los comentarios" });
+    }
+  }
+);
+
+projectRouter.post(
+  "/project/:projectId/comments",
+  checkAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { RefreshToken } = req.cookies;
+
+      if (!RefreshToken) {
+        res.status(401).json({ error: "Acceso no autorizado" });
+        return;
+      }
+
+      const projectId = parseInt(req.params.projectId);
+      const { content, parentCommentId, userId } = req.body;
+
+      if (isNaN(projectId) || !content.trim()) {
+        res.status(400).json({ error: "Datos inválidos" });
+        return;
+      }
+
+      const today = new Date().toISOString().split("T")[0]; // Formato YYYY-MM-DD
+      const redisKey = `comments:${userId}:${today}`;
+      const maxCommentsPerDay = 30;
+
+      // Obtener la cantidad actual de comentarios
+      const currentCount = (await redisClient.get(redisKey)) || "0";
+      const commentCount = parseInt(currentCount, 10);
+
+      if (commentCount >= maxCommentsPerDay) {
+        res.status(429).json({ error: "Límite de comentarios alcanzado por hoy" });
+        return;
+      }
+
+      // Incrementar el contador en Redis y establecer expiración de 24h si es el primer comentario del día
+      await redisClient.incr(redisKey);
+      if (commentCount === 0) {
+        await redisClient.expire(redisKey, 86400); // Expira en 24 horas
+      }
+
+      await db
+        .insert(comments)
+        .values({
+          projectId,
+          content,
+          authorId: userId,
+          parentId: parentCommentId,
+        })
+        .returning();
+
+      res.status(200).json({ message: "Comentario enviado con éxito" });
+    } catch (error) {
+      console.error("Error al agregar comentario:", error);
+      res.status(500).json({ error: "Error al agregar el comentario" });
+    }
+  }
+);
+
+
+projectRouter.get("/comments", checkAuth, async (req: Request, res: Response) => {
+  try {
+    const { RefreshToken } = req.cookies;
+
+    if (!RefreshToken) {
+      res.status(401).json({ error: "Acceso no autorizado" });
+      return;
+    }
+
+    const rawComments = await db
+      .select({
+        id: comments.id,
+        projectId: comments.projectId,
+        username: users.username,
+        projectTitle: projects.title,
+        content: comments.content,
+        parentId: comments.parentId,
+        avatar: users.image,
+        createdAt: comments.createdAt,
+      })
+      .from(comments)
+      .leftJoin(users, eq(comments.authorId, users.id))
+      .leftJoin(projects, eq(comments.projectId, projects.id))
+      .orderBy(desc(comments.createdAt));
+
+    res.status(200).json(rawComments);
+  } catch {
+    console.error("Error al obtener comentarios");
+    res.status(500).json({ error: "Error al obtener los comentarios" });
+  }
+});
+
+projectRouter.delete(
+  "/comments",
+  checkAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { RefreshToken } = req.cookies;
+
+      if (!RefreshToken) {
+        res.status(401).json({ error: "Acceso no autorizado" });
+        return;
+      }
+
+      const { commentId } = req.body;
+
+      if (!commentId || isNaN(commentId)) {
+        res.status(400).json({ error: "ID de comentario inválido" });
+        return;
+      }
+
+      // Verificar si el comentario existe
+      const commentExists = await db
+        .select({ id: comments.id })
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .limit(1);
+
+      if (commentExists.length === 0) {
+        res.status(404).json({ error: "Comentario no encontrado" });
+        return;
+      }
+
+      // Eliminar primero las respuestas al comentario (en caso de que las haya)
+      await db.delete(comments).where(eq(comments.parentId, commentId));
+
+      // Luego, eliminar el comentario principal
+      await db.delete(comments).where(eq(comments.id, commentId));
+
+      res.status(200).json({ message: "Comentario eliminado con éxito" });
+    } catch (error) {
+      console.error("Error al eliminar comentario:", error);
+      res.status(500).json({ error: "Error al eliminar el comentario" });
     }
   }
 );

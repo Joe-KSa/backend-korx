@@ -11,7 +11,9 @@ import {
   memberImages,
   memberSounds,
   sounds,
-  projects
+  comments,
+  projectMembers,
+  projects,
 } from "../../db/schema.js";
 import { eq, desc, asc, sql, SQL } from "drizzle-orm";
 import type { Member, Tag } from "../../core/types.js";
@@ -21,20 +23,19 @@ export const memberRouter = express.Router();
 
 memberRouter.get("/member", async (req: Request, res: Response) => {
   try {
-    const sort = req.query.sort === 'desc' ? 'desc' : 'asc';
-    const sortBy = req.query.sortBy || 'id';
-    
+    const sort = req.query.sort === "desc" ? "desc" : "asc";
+    const sortBy = req.query.sortBy || "id";
+
     // Definir campos válidos para ordenamiento
     const validSortFields: Record<string, SQL> = {
       projectsCount: sql`(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`,
       name: sql`${members.name}`,
       createdAt: sql`${members.createdAt}`,
       id: sql`${members.id}`,
-      rolePriority: sql`${roles.priority}`
+      rolePriority: sql`${roles.priority}`,
     };
-    
-    // Obtener campo y dirección de ordenamiento
-    const orderDirection = sort === 'asc' ? asc : desc;
+
+    const orderDirection = sort === "asc" ? asc : desc;
     const orderField = validSortFields[sortBy as string] || members.id;
 
     const rawData = await db
@@ -62,7 +63,23 @@ memberRouter.get("/member", async (req: Request, res: Response) => {
         soundUrl: sounds.url,
         soundPath: sounds.path,
         soundType: memberSounds.type,
-        projectsCount: sql`(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as("projectsCount"),
+        projectsCount:
+          sql`(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as(
+            "projectsCount"
+          ),
+        commentsCount:
+          sql`(SELECT COUNT(*) FROM ${comments} WHERE ${comments.authorId} = ${members.userId})`.as(
+            "commentsCount"
+          ),
+        collaborationsCount: sql`
+          (
+            SELECT COUNT(*) 
+            FROM ${projectMembers}
+            JOIN ${roles} ON ${projectMembers.roleId} = ${roles.id}
+            WHERE ${projectMembers.memberId} = ${members.id}
+              AND ${roles.name} = 'Colaborador'
+          )
+        `.as("collaborationsCount"),
       })
       .from(members)
       .leftJoin(users, eq(members.userId, users.id))
@@ -111,6 +128,8 @@ memberRouter.get("/member", async (req: Request, res: Response) => {
             type: row.soundType || "",
           },
           projectsCount: Number(row.projectsCount) || 0,
+          commentsCount: Number(row.commentsCount) || 0,
+          collaborationsCount: Number(row.collaborationsCount) || 0,
         });
       }
 
@@ -119,7 +138,6 @@ memberRouter.get("/member", async (req: Request, res: Response) => {
       if (row.tagId && !member.tags.some((tag: Tag) => tag.id === row.tagId)) {
         member.tags.push({ id: row.tagId, name: row.tagName });
       }
-    
 
       if (member.images && row.imageType === "avatar") {
         member.images.avatar = {
@@ -139,10 +157,10 @@ memberRouter.get("/member", async (req: Request, res: Response) => {
     const sortedMembers = Array.from(membersMap.values());
 
     // Ordenamiento adicional en caso necesario
-    if (sortBy === 'projectsCount') {
-      sortedMembers.sort((a, b) => 
-        sort === 'desc' 
-          ? a.projectsCount - b.projectsCount 
+    if (sortBy === "projectsCount") {
+      sortedMembers.sort((a, b) =>
+        sort === "desc"
+          ? a.projectsCount - b.projectsCount
           : b.projectsCount - a.projectsCount
       );
     }
@@ -188,7 +206,7 @@ memberRouter.put(
       if (name) updateData.name = name;
       if (description !== undefined) updateData.description = description;
       if (github !== undefined) updateData.github = github;
-      if (phrase !== undefined ) updateData.phrase = phrase;
+      if (phrase !== undefined) updateData.phrase = phrase;
       if (primaryColor !== undefined) updateData.primaryColor = primaryColor;
       if (secondaryColor !== undefined)
         updateData.secondaryColor = secondaryColor;
@@ -371,7 +389,10 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
       return;
     }
 
-    const memberData: Omit<Member, "projectsCount"> = {
+    const memberData: Omit<
+      Member,
+      "projectsCount" | "commentsCount" | "collaborationsCount"
+    > = {
       id: rawData[0].memberId,
       name: rawData[0].name,
       username: rawData[0].username,

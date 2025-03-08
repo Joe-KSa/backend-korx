@@ -9,24 +9,23 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { db } from "../../db/index.js";
 import express from "express";
-import { tags, members, roles, users, memberTags, images, memberImages, memberSounds, sounds, projects } from "../../db/schema.js";
+import { tags, members, roles, users, memberTags, images, memberImages, memberSounds, sounds, comments, projectMembers, projects, } from "../../db/schema.js";
 import { eq, desc, asc, sql } from "drizzle-orm";
 import checkAuth from "../../middleware/checkAuth.js";
 export const memberRouter = express.Router();
 memberRouter.get("/member", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const sort = req.query.sort === 'desc' ? 'desc' : 'asc';
-        const sortBy = req.query.sortBy || 'id';
+        const sort = req.query.sort === "desc" ? "desc" : "asc";
+        const sortBy = req.query.sortBy || "id";
         // Definir campos válidos para ordenamiento
         const validSortFields = {
             projectsCount: sql `(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`,
             name: sql `${members.name}`,
             createdAt: sql `${members.createdAt}`,
             id: sql `${members.id}`,
-            rolePriority: sql `${roles.priority}`
+            rolePriority: sql `${roles.priority}`,
         };
-        // Obtener campo y dirección de ordenamiento
-        const orderDirection = sort === 'asc' ? asc : desc;
+        const orderDirection = sort === "asc" ? asc : desc;
         const orderField = validSortFields[sortBy] || members.id;
         const rawData = yield db
             .select({
@@ -54,6 +53,16 @@ memberRouter.get("/member", (req, res) => __awaiter(void 0, void 0, void 0, func
             soundPath: sounds.path,
             soundType: memberSounds.type,
             projectsCount: sql `(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as("projectsCount"),
+            commentsCount: sql `(SELECT COUNT(*) FROM ${comments} WHERE ${comments.authorId} = ${members.userId})`.as("commentsCount"),
+            collaborationsCount: sql `
+          (
+            SELECT COUNT(*) 
+            FROM ${projectMembers}
+            JOIN ${roles} ON ${projectMembers.roleId} = ${roles.id}
+            WHERE ${projectMembers.memberId} = ${members.id}
+              AND ${roles.name} = 'Colaborador'
+          )
+        `.as("collaborationsCount"),
         })
             .from(members)
             .leftJoin(users, eq(members.userId, users.id))
@@ -99,6 +108,8 @@ memberRouter.get("/member", (req, res) => __awaiter(void 0, void 0, void 0, func
                         type: row.soundType || "",
                     },
                     projectsCount: Number(row.projectsCount) || 0,
+                    commentsCount: Number(row.commentsCount) || 0,
+                    collaborationsCount: Number(row.collaborationsCount) || 0,
                 });
             }
             const member = membersMap.get(row.memberId);
@@ -120,8 +131,8 @@ memberRouter.get("/member", (req, res) => __awaiter(void 0, void 0, void 0, func
         }
         const sortedMembers = Array.from(membersMap.values());
         // Ordenamiento adicional en caso necesario
-        if (sortBy === 'projectsCount') {
-            sortedMembers.sort((a, b) => sort === 'desc'
+        if (sortBy === "projectsCount") {
+            sortedMembers.sort((a, b) => sort === "desc"
                 ? a.projectsCount - b.projectsCount
                 : b.projectsCount - a.projectsCount);
         }

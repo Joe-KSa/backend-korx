@@ -41,6 +41,8 @@ interface Member {
   hidden: boolean;
   createdAt: string;
   projectsCount: number;
+  commentsCount: number;
+  collaborationsCount: number;
 }
 
 

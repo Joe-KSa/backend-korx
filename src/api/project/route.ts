@@ -19,6 +19,7 @@ import {
   memberTags,
 } from "../../db/schema.js";
 import { eq, inArray, and, SQL, sql, asc, desc } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import type {
   ProjectEntry,
   Tag,
@@ -29,6 +30,9 @@ import type {
 } from "../../core/types.js";
 import checkAuth from "../../middleware/checkAuth.js";
 import { redisClient } from "../../config/redis.config.js";
+
+const memberImagesAlias = alias(images, "member_images_alias");
+const memberTagsAlias = alias(tags, "member_tags_alias");
 
 export const projectRouter = express.Router();
 projectRouter.get("/project", async (_req: Request, res: Response) => {
@@ -43,34 +47,15 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
         creatorId: users.id,
         creatorName: users.name,
         creatorUsername: users.username,
-        creatorImage: users.image,
+        // Usamos el alias para obtener la imagen relacionada con el creador
+        creatorImage: memberImagesAlias.url,
         tagId: tags.id,
         tagName: tags.name,
-        imageUrl: images.url,
-        imagePublicId: images.publicId,
-        imageType: projectImages.type,
-        memberId: members.id,
-        memberName: members.name,
-        memberUsername: members.username,
-        memberUserId: members.userId,
-        memberDescription: members.description,
-        memberHidden: members.hidden,
-        memberGithub: members.github,
-        memberPhrase: members.phrase,
-        memberPrimaryColor: members.primaryColor,
-        memberSecondaryColor: members.secondaryColor,
-        memberCreatedAt: members.createdAt,
-        roleId: roles.id,
-        roleName: roles.name,
-        memberImageType: memberImages.type,
-        memberImageUrl: images.url,
-        memberImagePublicId: images.publicId,
-        soundId: sounds.id,
-        soundUrl: sounds.url,
-        soundPath: sounds.path,
-        soundType: memberSounds.type,
+        projectImageUrl: images.url,
+        projectImagePublicId: images.publicId,
+        projectImageType: projectImages.type,
         hidden: projects.hidden,
-        createdAt: projectImages.createdAt
+        createdAt: projectImages.createdAt,
       })
       .from(projects)
       .leftJoin(users, eq(projects.userId, users.id))
@@ -80,11 +65,14 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
       .leftJoin(images, eq(projectImages.imageId, images.id))
       .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
       .leftJoin(members, eq(projectMembers.memberId, members.id))
-      .leftJoin(roles, eq(projectMembers.roleId, roles.id))
       .leftJoin(memberImages, eq(members.id, memberImages.memberId))
-      .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
-      .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
-      .orderBy(desc(projects.createdAt))
+      .leftJoin(
+        memberImagesAlias,
+        eq(memberImages.imageId, memberImagesAlias.id)
+      )
+      .orderBy(desc(projects.createdAt));
+
+
 
     const projectsMap = new Map<number, ProjectEntry>();
 
@@ -106,96 +94,36 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
           },
           tags: [],
           images:
-            row.imageType === "general"
+            row.projectImageType === "general" && row.projectImageUrl
               ? {
-                  url: row.imageUrl,
-                  publicId: row.imagePublicId,
-                  type: row.imageType,
+                  url: row.projectImageUrl,
+                  publicId: row.projectImagePublicId,
+                  type: row.projectImageType,
                 }
               : { url: null, publicId: null, type: null },
-          members: [],
           hidden: row.hidden,
         });
       }
 
       const project = projectsMap.get(row.projectId)!;
-      if (!project) continue;
-
       if (row.tagId && !project.tags.some((tag: Tag) => tag.id === row.tagId)) {
         project.tags.push({ id: row.tagId, name: row.tagName });
-      }
-
-      if (
-        row.memberId &&
-        !project.members.some((m: Member) => m.id === row.memberId)
-      ) {
-        project.members.push({
-          id: row.memberId,
-          name: row.memberName,
-          username: row.memberUsername,
-          userId: row.memberUserId,
-          createdAt: row.memberCreatedAt,
-          role: row.roleId ? { id: row.roleId, name: row.roleName } : null,
-          description: row.memberDescription,
-          hidden: row.memberHidden,
-          github: row.memberGithub,
-          phrase: row.memberPhrase,
-          primaryColor: row.memberPrimaryColor,
-          secondaryColor: row.memberSecondaryColor,
-          tags: [],
-          images: {
-            avatar: { url: "", publicId: "" },
-            banner: { url: "", publicId: "" },
-          },
-          sound: {
-            url: row.soundUrl || "",
-            path: row.soundPath || "",
-            type: row.soundType || "",
-          },
-        });
-      }
-
-      const member = project.members.find((m: any) => m.id === row.memberId);
-      if (!member) continue;
-
-      if (row.tagId && !member.tags.some((tag: Tag) => tag.id === row.tagId)) {
-        member.tags.push({ id: row.tagId, name: row.tagName });
-      }
-
-      if (row.memberImageType === "avatar") {
-        member.images.avatar = {
-          url: row.memberImageUrl,
-          publicId: row.memberImagePublicId,
-        };
-      }
-
-      if (row.memberImageType === "banner") {
-        member.images.banner = {
-          url: row.memberImageUrl,
-          publicId: row.memberImagePublicId,
-        };
       }
     }
 
     res.status(200).json(Array.from(projectsMap.values()));
   } catch (error) {
-    console.error("Error en /project:", error);
+    console.error("Error al obtener proyectos:", error);
     res.status(500).json({ error: "Error al obtener los proyectos" });
   }
 });
 
+
 projectRouter.get(
   "/project/:projectId",
-  checkAuth,
   async (req: Request, res: Response) => {
     try {
       const projectId = Number(req.params.projectId);
-      const { RefreshToken } = req.cookies;
-
-      if (!RefreshToken) {
-        res.status(401).send("Unauthorized access");
-        return;
-      }
 
       const rawData = await db
         .select({
@@ -207,12 +135,12 @@ projectRouter.get(
           creatorId: users.id,
           creatorName: users.name,
           creatorUsername: users.username,
-          creatorImage: users.image,
-          tagId: tags.id,
-          tagName: tags.name,
-          imageUrl: images.url,
-          imagePublicId: images.publicId,
-          imageType: projectImages.type,
+          creatorImage: memberImagesAlias.url,
+          projectTagId: tags.id,
+          projectTagName: tags.name,
+          projectImageUrl: images.url,
+          projectImagePublicId: images.publicId,
+          projectImageType: projectImages.type,
           memberId: members.id,
           memberName: members.name,
           memberUsername: members.username,
@@ -227,13 +155,32 @@ projectRouter.get(
           roleId: roles.id,
           roleName: roles.name,
           memberImageType: memberImages.type,
-          memberImageUrl: images.url, // Asegúrate de que este alias no entre en conflicto con el de las imágenes del proyecto
-          memberImagePublicId: images.publicId,
+          memberImageUrl: memberImagesAlias.url,
+          memberImagePublicId: memberImagesAlias.publicId,
+          memberTagId: memberTagsAlias.id,
+          memberTagName: memberTagsAlias.name,
           soundId: sounds.id,
           soundUrl: sounds.url,
           soundPath: sounds.path,
           soundType: memberSounds.type,
           hidden: projects.hidden,
+          projectsCount:
+            sql`(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as(
+              "projectsCount"
+            ),
+          commentsCount:
+            sql`(SELECT COUNT(*) FROM ${comments} WHERE ${comments.authorId} = ${members.userId})`.as(
+              "commentsCount"
+            ),
+          collaborationsCount: sql`
+                    (
+                      SELECT COUNT(*) 
+                      FROM ${projectMembers}
+                      JOIN ${roles} ON ${projectMembers.roleId} = ${roles.id}
+                      WHERE ${projectMembers.memberId} = ${members.id}
+                        AND ${roles.name} = 'Colaborador'
+                    )
+                  `.as("collaborationsCount"),
         })
         .from(projects)
         .leftJoin(users, eq(projects.userId, users.id))
@@ -243,8 +190,14 @@ projectRouter.get(
         .leftJoin(images, eq(projectImages.imageId, images.id))
         .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
         .leftJoin(members, eq(projectMembers.memberId, members.id))
+        .leftJoin(memberTags, eq(members.id, memberTags.memberId))
+        .leftJoin(memberTagsAlias, eq(memberTags.tagId, memberTagsAlias.id))
         .leftJoin(roles, eq(projectMembers.roleId, roles.id))
         .leftJoin(memberImages, eq(members.id, memberImages.memberId))
+        .leftJoin(
+          memberImagesAlias,
+          eq(memberImages.imageId, memberImagesAlias.id)
+        )
         .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
         .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
         .where(eq(projects.id, projectId));
@@ -269,11 +222,11 @@ projectRouter.get(
         },
         tags: [],
         images:
-          project.imageType === "general"
+          project.projectImageType === "general"
             ? {
-                url: project.imageUrl,
-                publicId: project.imagePublicId,
-                type: project.imageType,
+                url: project.projectImageUrl,
+                publicId: project.projectImagePublicId,
+                type: project.projectImageType,
               }
             : { url: null, publicId: null, type: null },
         members: [],
@@ -285,9 +238,12 @@ projectRouter.get(
 
       for (const row of rawData) {
         // Agregar tags al proyecto
-        if (row.tagId && !tagSet.has(row.tagId)) {
-          tagSet.add(row.tagId);
-          projectDetails.tags.push({ id: row.tagId, name: row.tagName });
+        if (row.projectTagId && !tagSet.has(row.projectTagId)) {
+          tagSet.add(row.projectTagId);
+          projectDetails.tags.push({
+            id: row.projectTagId,
+            name: row.projectTagName,
+          });
         }
 
         // Agregar miembros con todos los datos
@@ -316,6 +272,9 @@ projectRouter.get(
               path: row.soundPath || "",
               type: row.soundType || "",
             },
+            projectsCount: Number(row.projectsCount) || 0,
+            commentsCount: Number(row.commentsCount) || 0,
+            collaborationsCount: Number(row.collaborationsCount) || 0,
           });
         }
 
@@ -327,20 +286,20 @@ projectRouter.get(
 
         // Agregar tags al miembro
         if (
-          row.tagId &&
-          !member.tags.some((tag: Tag) => tag.id === row.tagId)
+          row.memberTagId &&
+          !member.tags.some((tag: Tag) => tag.id === row.memberTagId)
         ) {
-          member.tags.push({ id: row.tagId, name: row.tagName });
+          member.tags.push({ id: row.memberTagId, name: row.memberTagName });
         }
 
         // Asignar imagenes según el tipo
-        if (row.memberImageType === "avatar") {
+        if (row.memberImageType === "avatar" && row.memberImageUrl) {
           member.images.avatar = {
             url: row.memberImageUrl,
             publicId: row.memberImagePublicId,
           };
         }
-        if (row.memberImageType === "banner") {
+        if (row.memberImageType === "banner" && row.memberImageUrl) {
           member.images.banner = {
             url: row.memberImageUrl,
             publicId: row.memberImagePublicId,
@@ -565,6 +524,23 @@ projectRouter.get(
           soundUrl: sounds.url,
           soundPath: sounds.path,
           soundType: memberSounds.type,
+          projectsCount:
+            sql`(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as(
+              "projectsCount"
+            ),
+          commentsCount:
+            sql`(SELECT COUNT(*) FROM ${comments} WHERE ${comments.authorId} = ${members.userId})`.as(
+              "commentsCount"
+            ),
+          collaborationsCount: sql`
+                    (
+                      SELECT COUNT(*) 
+                      FROM ${projectMembers}
+                      JOIN ${roles} ON ${projectMembers.roleId} = ${roles.id}
+                      WHERE ${projectMembers.memberId} = ${members.id}
+                        AND ${roles.name} = 'Colaborador'
+                    )
+                  `.as("collaborationsCount"),
         })
         .from(projectMembers)
         .leftJoin(members, eq(projectMembers.memberId, members.id))
@@ -578,7 +554,7 @@ projectRouter.get(
         .where(eq(projectMembers.projectId, projectId))
         .orderBy(orderDirection(orderField));
 
-      const membersMap = new Map<number, Omit<Member, "projectsCount">>();
+      const membersMap = new Map<number, Member>();
 
       for (const row of membersData) {
         if (!row.memberId) continue;
@@ -607,6 +583,9 @@ projectRouter.get(
               path: row.soundPath || "",
               type: row.soundType || "",
             },
+            projectsCount: Number(row.projectsCount) || 0,
+            commentsCount: Number(row.commentsCount) || 0,
+            collaborationsCount: Number(row.collaborationsCount) || 0,
           });
         }
 
@@ -938,12 +917,20 @@ projectRouter.get(
           username: users.username,
           content: comments.content,
           parentId: comments.parentId,
-          avatar: users.image,
+          avatar: images.url,
           createdAt: comments.createdAt,
         })
         .from(comments)
         .leftJoin(users, eq(comments.authorId, users.id))
         .leftJoin(members, eq(members.userId, users.id))
+        .leftJoin(
+          memberImages,
+          and(
+            eq(memberImages.memberId, members.id),
+            eq(memberImages.type, "avatar")
+          )
+        )
+        .leftJoin(images, eq(images.id, memberImages.memberId))
         .where(eq(comments.projectId, projectId))
         .orderBy(comments.createdAt);
 
@@ -1034,7 +1021,9 @@ projectRouter.post(
       const commentCount = parseInt(currentCount, 10);
 
       if (commentCount >= maxCommentsPerDay) {
-        res.status(429).json({ error: "Límite de comentarios alcanzado por hoy" });
+        res
+          .status(429)
+          .json({ error: "Límite de comentarios alcanzado por hoy" });
         return;
       }
 
@@ -1062,38 +1051,50 @@ projectRouter.post(
   }
 );
 
+projectRouter.get(
+  "/comments",
+  checkAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { RefreshToken } = req.cookies;
 
-projectRouter.get("/comments", checkAuth, async (req: Request, res: Response) => {
-  try {
-    const { RefreshToken } = req.cookies;
+      if (!RefreshToken) {
+        res.status(401).json({ error: "Acceso no autorizado" });
+        return;
+      }
 
-    if (!RefreshToken) {
-      res.status(401).json({ error: "Acceso no autorizado" });
-      return;
+      const rawComments = await db
+        .select({
+          id: comments.id,
+          projectId: comments.projectId,
+          username: users.username,
+          projectTitle: projects.title,
+          content: comments.content,
+          parentId: comments.parentId,
+          avatar: images.url,
+          createdAt: comments.createdAt,
+        })
+        .from(comments)
+        .leftJoin(users, eq(comments.authorId, users.id))
+        .leftJoin(members, eq(members.userId, users.id))
+        .leftJoin(
+          memberImages,
+          and(
+            eq(memberImages.memberId, members.id),
+            eq(memberImages.type, "avatar")
+          )
+        )
+        .leftJoin(images, eq(images.id, memberImages.imageId))
+        .leftJoin(projects, eq(comments.projectId, projects.id))
+        .orderBy(desc(comments.createdAt));
+
+      res.status(200).json(rawComments);
+    } catch {
+      console.error("Error al obtener comentarios");
+      res.status(500).json({ error: "Error al obtener los comentarios" });
     }
-
-    const rawComments = await db
-      .select({
-        id: comments.id,
-        projectId: comments.projectId,
-        username: users.username,
-        projectTitle: projects.title,
-        content: comments.content,
-        parentId: comments.parentId,
-        avatar: users.image,
-        createdAt: comments.createdAt,
-      })
-      .from(comments)
-      .leftJoin(users, eq(comments.authorId, users.id))
-      .leftJoin(projects, eq(comments.projectId, projects.id))
-      .orderBy(desc(comments.createdAt));
-
-    res.status(200).json(rawComments);
-  } catch {
-    console.error("Error al obtener comentarios");
-    res.status(500).json({ error: "Error al obtener los comentarios" });
   }
-});
+);
 
 projectRouter.delete(
   "/comments",

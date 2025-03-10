@@ -372,6 +372,10 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
         soundPath: sounds.path,
         soundType: memberSounds.type,
         createdAt: members.createdAt,
+        projectsCount:
+          sql`(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as(
+            "projectsCount"
+          ),
       })
       .from(members)
       .leftJoin(users, eq(users.id, members.userId))
@@ -389,10 +393,7 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
       return;
     }
 
-    const memberData: Omit<
-      Member,
-      "projectsCount" | "commentsCount" | "collaborationsCount"
-    > = {
+    const memberData: Omit<Member, "commentsCount" | "collaborationsCount"> = {
       id: rawData[0].memberId,
       name: rawData[0].name,
       username: rawData[0].username,
@@ -418,6 +419,7 @@ memberRouter.get("/member/:username", async (req: Request, res: Response) => {
         path: rawData[0].soundPath,
         type: rawData[0].soundType,
       },
+      projectsCount: Number(rawData[0].projectsCount) || 0,
     };
 
     for (const row of rawData) {

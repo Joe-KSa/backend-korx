@@ -95,13 +95,6 @@ export const memberSounds = sqliteTable("member_sounds", {
     soundIndex: index("idx_member_sounds_sound_id").on(table.soundId),
     uniqueMemberSound: unique("uq_member_sound").on(table.memberId, table.soundId), // Evita duplicados
 }));
-export const badges = sqliteTable("badges", {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    name: text("name", { length: 50 }).notNull(), // Nombre de la insignia (ej. "Veteran", "Contributor")
-    description: text("description", { length: 255 }).default(""), // Descripción de la insignia
-}, (table) => ({
-    badgeIndex: index("idx_badges_name").on(table.name),
-}));
 // Users
 export const users = sqliteTable("users", {
     id: text("id").primaryKey(), // ID proporcionado por Discord

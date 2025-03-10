@@ -1,10 +1,10 @@
 import { v2 as cloudinary } from "cloudinary";
-
+import path from "path";
 import { randomUUID } from "crypto";
 
 export class Cloudinary {
   static async uploadToCloudinary(buffer: Buffer, fileName: string) {
-    const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const safeFileName = path.parse(fileName).name.replace(/[^a-zA-Z0-9.-]/g, "_");
     const uniqueId = randomUUID();
 
     return new Promise((resolve, reject) => {

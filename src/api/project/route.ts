@@ -17,6 +17,7 @@ import {
   sounds,
   notifications,
   memberTags,
+  projectLikes,
 } from "../../db/schema.js";
 import { eq, inArray, and, SQL, sql, asc, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -33,6 +34,7 @@ import { redisClient } from "../../config/redis.config.js";
 
 const memberImagesAlias = alias(images, "member_images_alias");
 const memberTagsAlias = alias(tags, "member_tags_alias");
+const likeUsers = alias(users, "likeUsers");
 
 export const projectRouter = express.Router();
 projectRouter.get("/project", async (_req: Request, res: Response) => {
@@ -54,6 +56,10 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
         projectImageUrl: images.url,
         projectImagePublicId: images.publicId,
         projectImageType: projectImages.type,
+        likesCount: sql<number>`(SELECT COUNT(*) FROM project_likes WHERE project_likes.project_id = ${projects.id})`,
+        // Campos para la lista de usuarios que dieron like
+        likeUserId: likeUsers.id,
+        likeUsername: likeUsers.username,
         hidden: projects.hidden,
         createdAt: projectImages.createdAt,
       })
@@ -70,15 +76,18 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
         memberImagesAlias,
         eq(memberImages.imageId, memberImagesAlias.id)
       )
+      // Joins para traer los likes y sus usuarios (usamos alias para no interferir con el creator)
+      .leftJoin(projectLikes, eq(projects.id, projectLikes.projectId))
+      .leftJoin(likeUsers, eq(projectLikes.userId, likeUsers.id))
       .orderBy(desc(projects.createdAt));
 
-
-
+    // Usamos un Map para agrupar la información por proyecto
     const projectsMap = new Map<number, ProjectEntry>();
 
     for (const row of rawData) {
       if (!row.projectId) continue;
 
+      // Si es la primera vez que vemos este proyecto, lo inicializamos
       if (!projectsMap.has(row.projectId)) {
         projectsMap.set(row.projectId, {
           id: row.projectId,
@@ -101,13 +110,31 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
                   type: row.projectImageType,
                 }
               : { url: null, publicId: null, type: null },
+          likesCount: row.likesCount ?? 0,
+          // Inicializamos la lista de usuarios que dieron like
+          likes: [],
           hidden: row.hidden,
         });
       }
 
       const project = projectsMap.get(row.projectId)!;
+
+      // Agregamos el tag si es que no está ya en la lista
       if (row.tagId && !project.tags.some((tag: Tag) => tag.id === row.tagId)) {
         project.tags.push({ id: row.tagId, name: row.tagName });
+      }
+
+      // Si existe información de usuario que dio like, la agregamos sin duplicados
+      if (
+        row.likeUserId &&
+        !project.likes.some(
+          (like: { id: string; username: string }) => like.id === row.likeUserId
+        )
+      ) {
+        project.likes.push({
+          id: row.likeUserId,
+          username: row.likeUsername,
+        });
       }
     }
 
@@ -117,7 +144,6 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
     res.status(500).json({ error: "Error al obtener los proyectos" });
   }
 });
-
 
 projectRouter.get(
   "/project/:projectId",
@@ -1140,3 +1166,55 @@ projectRouter.delete(
     }
   }
 );
+
+// Project Like
+
+projectRouter.post(
+  "/project/:projectId/like",
+  checkAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { RefreshToken } = req.cookies;
+      if (!RefreshToken) {
+        res.status(401).json({ success: false, error: "Acceso no autorizado" });
+        return;
+      }
+
+      const projectId = parseInt(req.params.projectId);
+      const { userId } = req.body;
+
+      // Validamos que projectId sea un número y que userId esté presente
+      if (isNaN(projectId) || !userId) {
+        res.status(400).json({ success: false, error: "Datos inválidos" });
+        return;
+      }
+
+      // Ejecutamos en una transacción para asegurar la atomicidad
+      await db.transaction(async (tx) => {
+        // Intentamos eliminar el like
+        const deleteResult = await tx
+          .delete(projectLikes)
+          .where(
+            and(
+              eq(projectLikes.projectId, projectId),
+              eq(projectLikes.userId, userId)
+            )
+          );
+
+        // Si no se eliminó nada, insertamos el like
+        if (deleteResult.rowsAffected === 0) {
+          await tx
+            .insert(projectLikes)
+            .values({ projectId, userId })
+            .onConflictDoNothing();
+        }
+      });
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("Error al togglear like:", error);
+      res.status(500).json({ success: false, error: "Error en el servidor" });
+    }
+  }
+);
+

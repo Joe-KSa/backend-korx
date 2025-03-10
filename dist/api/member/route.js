@@ -318,6 +318,7 @@ memberRouter.get("/member/:username", (req, res) => __awaiter(void 0, void 0, vo
             soundPath: sounds.path,
             soundType: memberSounds.type,
             createdAt: members.createdAt,
+            projectsCount: sql `(SELECT COUNT(*) FROM ${projects} WHERE ${projects.userId} = ${members.userId})`.as("projectsCount"),
         })
             .from(members)
             .leftJoin(users, eq(users.id, members.userId))
@@ -359,6 +360,7 @@ memberRouter.get("/member/:username", (req, res) => __awaiter(void 0, void 0, vo
                 path: rawData[0].soundPath,
                 type: rawData[0].soundType,
             },
+            projectsCount: Number(rawData[0].projectsCount) || 0,
         };
         for (const row of rawData) {
             if (row.tagId && !memberData.tags.some((tag) => tag.id === row.tagId)) {

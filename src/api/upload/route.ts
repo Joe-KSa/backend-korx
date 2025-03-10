@@ -10,7 +10,7 @@ export const uploadRouter = express.Router();
 uploadRouter.post(
   "/upload",
   checkAuth,
-  upload.single("file"), // Cambia "image" por "file" para aceptar ambos tipos
+  upload.single("file"), // Se acepta el campo "file"
   async (req: Request, res: Response) => {
     try {
       const { RefreshToken } = req.cookies;
@@ -30,9 +30,7 @@ uploadRouter.post(
 
       // Determinar si es imagen o video
       const resourceType = mimeType.startsWith("image/")
-        ? mimeType === "image/gif"
-          ? "image"
-          : "image"
+        ? "image"
         : mimeType.startsWith("video/")
         ? "video"
         : null;

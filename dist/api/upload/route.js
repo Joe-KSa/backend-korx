@@ -13,7 +13,7 @@ import checkAuth from "../../middleware/checkAuth.js";
 import multer from "multer";
 const upload = multer();
 export const uploadRouter = express.Router();
-uploadRouter.post("/upload", checkAuth, upload.single("file"), // Cambia "image" por "file" para aceptar ambos tipos
+uploadRouter.post("/upload", checkAuth, upload.single("file"), // Se acepta el campo "file"
 (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { RefreshToken } = req.cookies;
@@ -29,9 +29,7 @@ uploadRouter.post("/upload", checkAuth, upload.single("file"), // Cambia "image"
         const mimeType = req.file.mimetype;
         // Determinar si es imagen o video
         const resourceType = mimeType.startsWith("image/")
-            ? mimeType === "image/gif"
-                ? "image"
-                : "image"
+            ? "image"
             : mimeType.startsWith("video/")
                 ? "video"
                 : null;

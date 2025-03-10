@@ -9,15 +9,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import express from "express";
 import { db } from "../../db/index.js";
-import { projects, tags, comments, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, notifications, memberTags, } from "../../db/schema.js";
+import { projects, tags, comments, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, notifications, memberTags, projectLikes, } from "../../db/schema.js";
 import { eq, inArray, and, sql, asc, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import checkAuth from "../../middleware/checkAuth.js";
 import { redisClient } from "../../config/redis.config.js";
 const memberImagesAlias = alias(images, "member_images_alias");
 const memberTagsAlias = alias(tags, "member_tags_alias");
+const likeUsers = alias(users, "likeUsers");
 export const projectRouter = express.Router();
 projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const rawData = yield db
             .select({
@@ -36,6 +38,10 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             projectImageUrl: images.url,
             projectImagePublicId: images.publicId,
             projectImageType: projectImages.type,
+            likesCount: sql `(SELECT COUNT(*) FROM project_likes WHERE project_likes.project_id = ${projects.id})`,
+            // Campos para la lista de usuarios que dieron like
+            likeUserId: likeUsers.id,
+            likeUsername: likeUsers.username,
             hidden: projects.hidden,
             createdAt: projectImages.createdAt,
         })
@@ -49,11 +55,16 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
             .leftJoin(members, eq(projectMembers.memberId, members.id))
             .leftJoin(memberImages, eq(members.id, memberImages.memberId))
             .leftJoin(memberImagesAlias, eq(memberImages.imageId, memberImagesAlias.id))
+            // Joins para traer los likes y sus usuarios (usamos alias para no interferir con el creator)
+            .leftJoin(projectLikes, eq(projects.id, projectLikes.projectId))
+            .leftJoin(likeUsers, eq(projectLikes.userId, likeUsers.id))
             .orderBy(desc(projects.createdAt));
+        // Usamos un Map para agrupar la información por proyecto
         const projectsMap = new Map();
         for (const row of rawData) {
             if (!row.projectId)
                 continue;
+            // Si es la primera vez que vemos este proyecto, lo inicializamos
             if (!projectsMap.has(row.projectId)) {
                 projectsMap.set(row.projectId, {
                     id: row.projectId,
@@ -75,12 +86,24 @@ projectRouter.get("/project", (_req, res) => __awaiter(void 0, void 0, void 0, f
                             type: row.projectImageType,
                         }
                         : { url: null, publicId: null, type: null },
+                    likesCount: (_a = row.likesCount) !== null && _a !== void 0 ? _a : 0,
+                    // Inicializamos la lista de usuarios que dieron like
+                    likes: [],
                     hidden: row.hidden,
                 });
             }
             const project = projectsMap.get(row.projectId);
+            // Agregamos el tag si es que no está ya en la lista
             if (row.tagId && !project.tags.some((tag) => tag.id === row.tagId)) {
                 project.tags.push({ id: row.tagId, name: row.tagName });
+            }
+            // Si existe información de usuario que dio like, la agregamos sin duplicados
+            if (row.likeUserId &&
+                !project.likes.some((like) => like.id === row.likeUserId)) {
+                project.likes.push({
+                    id: row.likeUserId,
+                    username: row.likeUsername,
+                });
             }
         }
         res.status(200).json(Array.from(projectsMap.values()));
@@ -908,5 +931,41 @@ projectRouter.delete("/comments", checkAuth, (req, res) => __awaiter(void 0, voi
     catch (error) {
         console.error("Error al eliminar comentario:", error);
         res.status(500).json({ error: "Error al eliminar el comentario" });
+    }
+}));
+// Project Like
+projectRouter.post("/project/:projectId/like", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { RefreshToken } = req.cookies;
+        if (!RefreshToken) {
+            res.status(401).json({ success: false, error: "Acceso no autorizado" });
+            return;
+        }
+        const projectId = parseInt(req.params.projectId);
+        const { userId } = req.body;
+        // Validamos que projectId sea un número y que userId esté presente
+        if (isNaN(projectId) || !userId) {
+            res.status(400).json({ success: false, error: "Datos inválidos" });
+            return;
+        }
+        // Ejecutamos en una transacción para asegurar la atomicidad
+        yield db.transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+            // Intentamos eliminar el like
+            const deleteResult = yield tx
+                .delete(projectLikes)
+                .where(and(eq(projectLikes.projectId, projectId), eq(projectLikes.userId, userId)));
+            // Si no se eliminó nada, insertamos el like
+            if (deleteResult.rowsAffected === 0) {
+                yield tx
+                    .insert(projectLikes)
+                    .values({ projectId, userId })
+                    .onConflictDoNothing();
+            }
+        }));
+        res.status(200).json({ success: true });
+    }
+    catch (error) {
+        console.error("Error al togglear like:", error);
+        res.status(500).json({ success: false, error: "Error en el servidor" });
     }
 }));

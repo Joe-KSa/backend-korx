@@ -16,70 +16,70 @@ import { eq, and } from "drizzle-orm";
 
 export const notificationRouter = express.Router();
 
-notificationRouter.get(
-  "/notification",
-  checkAuth,
-  async (req: Request, res: Response) => {
-    try {
-      const { RefreshToken } = req.cookies;
-      if (!RefreshToken) {
-        res.status(401).send("Unauthorized access");
-        return;
-      }
+  notificationRouter.get(
+    "/notification",
+    checkAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const { RefreshToken } = req.cookies;
+        if (!RefreshToken) {
+          res.status(401).send("Unauthorized access");
+          return;
+        }
 
-      // Validar la sesión y obtener el userId
-      const session = await db
-        .select()
-        .from(sessions)
-        .where(eq(sessions.refreshToken, RefreshToken))
-        .limit(1);
+        // Validar la sesión y obtener el userId
+        const session = await db
+          .select()
+          .from(sessions)
+          .where(eq(sessions.refreshToken, RefreshToken))
+          .limit(1);
 
-      if (session.length === 0) {
-        res.status(401).send("Session not found or invalid");
-        return;
-      }
-      const userId = session[0].userId;
+        if (session.length === 0) {
+          res.status(401).send("Session not found or invalid");
+          return;
+        }
+        const userId = session[0].userId;
 
-      const enrichedNotifications = await db
-        .select({
-          id: notifications.id,
-          userId: notifications.userId,
-          type: notifications.type,
-          entityId: notifications.entityId,
-          message: notifications.message,
-          status: notifications.status,
-          createdAt: notifications.createdAt,
-          // Datos del proyecto (solo para project_invite)
-          project: {
-            title: projects.title,
-            image: images.url,
-          },
-          sender: {
-            name: users.name,
-            image: users.image,
-          },
-        })
-        .from(notifications)
-        .leftJoin(
-          projects,
-          and(
-            eq(projects.id, notifications.entityId),
-            eq(notifications.type, "project_invite")
+        const enrichedNotifications = await db
+          .select({
+            id: notifications.id,
+            userId: notifications.userId,
+            type: notifications.type,
+            entityId: notifications.entityId,
+            message: notifications.message,
+            status: notifications.status,
+            createdAt: notifications.createdAt,
+            // Datos del proyecto (solo para project_invite)
+            project: {
+              title: projects.title,
+              image: images.url,
+            },
+            sender: {
+              name: users.name,
+              image: users.image,
+            },
+          })
+          .from(notifications)
+          .leftJoin(
+            projects,
+            and(
+              eq(projects.id, notifications.entityId),
+              eq(notifications.type, "project_invite")
+            )
           )
-        )
-        .leftJoin(projectImages, eq(projectImages.projectId, projects.id))
-        .leftJoin(images, eq(images.id, projectImages.imageId))
-        .leftJoin(users, eq(users.id, notifications.senderId))
-        .where(eq(notifications.userId, userId as string))
-        .groupBy(notifications.id);
+          .leftJoin(projectImages, eq(projectImages.projectId, projects.id))
+          .leftJoin(images, eq(images.id, projectImages.imageId))
+          .leftJoin(users, eq(users.id, notifications.senderId))
+          .where(eq(notifications.userId, userId as string))
+          .groupBy(notifications.id);
 
-      res.json(enrichedNotifications);
-    } catch (err) {
-      console.error(err);
-      res.status(500).send("Server error");
+        res.json(enrichedNotifications);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send("Server error");
+      }
     }
-  }
-);
+  );
 
 notificationRouter.patch(
   "/notification/:notificationId/respond",

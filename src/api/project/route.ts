@@ -50,7 +50,14 @@ projectRouter.get("/project", async (_req: Request, res: Response) => {
         creatorName: users.name,
         creatorUsername: users.username,
         // Usamos el alias para obtener la imagen relacionada con el creador
-        creatorImage: memberImagesAlias.url,
+        creatorImage: sql`
+        (SELECT ${images.url}
+        FROM ${members}
+        LEFT JOIN ${memberImages} ON ${members.id} = ${memberImages.memberId}
+        LEFT JOIN ${images} ON ${memberImages.imageId} = ${images.id}
+        WHERE ${members.userId} = ${users.id} AND ${memberImages.type} = 'avatar'
+        LIMIT 1
+        )`.as("creatorImage"),
         tagId: tags.id,
         tagName: tags.name,
         projectImageUrl: images.url,
@@ -161,7 +168,14 @@ projectRouter.get(
           creatorId: users.id,
           creatorName: users.name,
           creatorUsername: users.username,
-          creatorImage: memberImagesAlias.url,
+          creatorImage: sql`
+          (SELECT ${images.url}
+          FROM ${members}
+          LEFT JOIN ${memberImages} ON ${members.id} = ${memberImages.memberId}
+          LEFT JOIN ${images} ON ${memberImages.imageId} = ${images.id}
+          WHERE ${members.userId} = ${users.id} AND ${memberImages.type} = 'avatar'
+          LIMIT 1
+          )`.as("creatorImage"),
           projectTagId: tags.id,
           projectTagName: tags.name,
           projectImageUrl: images.url,
@@ -956,7 +970,7 @@ projectRouter.get(
             eq(memberImages.type, "avatar")
           )
         )
-        .leftJoin(images, eq(images.id, memberImages.memberId))
+        .leftJoin(images, eq(images.id, memberImages.imageId))
         .where(eq(comments.projectId, projectId))
         .orderBy(comments.createdAt);
 
@@ -1217,4 +1231,3 @@ projectRouter.post(
     }
   }
 );
-

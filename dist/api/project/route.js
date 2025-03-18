@@ -9,7 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import express from "express";
 import { db } from "../../db/index.js";
-import { projects, tags, comments, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, notifications, memberTags, projectLikes, } from "../../db/schema.js";
+import { projects, tags, comments, projectTags, members, projectMembers, users, projectImages, images, roles, memberImages, memberSounds, sounds, notifications, memberTags, projectLikes, sessions } from "../../db/schema.js";
 import { eq, inArray, and, sql, asc, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import checkAuth from "../../middleware/checkAuth.js";
@@ -196,7 +196,8 @@ projectRouter.get("/project/:projectId", (req, res) => __awaiter(void 0, void 0,
             .leftJoin(memberImagesAlias, eq(memberImages.imageId, memberImagesAlias.id))
             .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
             .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
-            .where(eq(projects.id, projectId));
+            .where(eq(projects.id, projectId))
+            .orderBy(roles.priority);
         if (!rawData.length) {
             res.status(404).json({ error: "Proyecto no encontrado" });
             return;
@@ -552,22 +553,61 @@ projectRouter.put("/project/:projectId", (req, res) => __awaiter(void 0, void 0,
         const { RefreshToken } = req.cookies;
         const { title, description, repository, url, images: requestImages, members: requestMembers, tags, } = req.body;
         if (!RefreshToken) {
-            res.status(401).json({ error: "Unauthorized access" });
+            res.status(401).json({ error: "Acceso no autorizado" });
             return;
         }
-        // Obtener el proyecto actual
-        const existingProject = yield db
-            .select()
+        // Obtener usuario autenticado desde la sesión
+        const session = yield db
+            .select({ userId: sessions.userId })
+            .from(sessions)
+            .where(eq(sessions.refreshToken, RefreshToken))
+            .limit(1)
+            .all();
+        if (session.length === 0) {
+            res.status(401).json({ error: "Sesión no válida" });
+            return;
+        }
+        const authenticatedUserId = session[0].userId;
+        // Obtener datos del usuario autenticado (rol y proyectos)
+        const userData = yield db
+            .select({ roleId: users.roleId })
+            .from(users)
+            .where(eq(users.id, authenticatedUserId))
+            .limit(1)
+            .all();
+        if (userData.length === 0) {
+            res.status(403).json({ error: "Usuario no encontrado" });
+            return;
+        }
+        const userRoleId = userData[0].roleId;
+        // Obtener datos del proyecto
+        const projectData = yield db
+            .select({ ownerId: projects.userId })
             .from(projects)
             .where(eq(projects.id, projectId))
-            .limit(1);
-        if (!existingProject.length) {
+            .limit(1)
+            .all();
+        if (projectData.length === 0) {
             res.status(404).json({ error: "Proyecto no encontrado" });
+            return;
+        }
+        const projectOwnerId = projectData[0].ownerId;
+        // Verificar si el usuario es dueño o tiene permisos
+        const allowedRoles = new Set(["Moderador", "Administrador"]);
+        const roleData = yield db
+            .select({ roleName: roles.name })
+            .from(roles)
+            .where(eq(roles.id, userRoleId))
+            .limit(1)
+            .all();
+        const userRoleName = roleData.length > 0 ? roleData[0].roleName : "";
+        if (authenticatedUserId !== projectOwnerId && !allowedRoles.has(userRoleName)) {
+            res.status(403).json({ error: "No tienes permisos para editar este proyecto" });
             return;
         }
         // Construir objeto de actualización evitando sobreescribir todos los valores
         const updatedFields = {
-            hidden: true, // Ocultar proyecto para revision
+            hidden: true, // Ocultar proyecto para revisión
         };
         if (title)
             updatedFields.title = title;
@@ -599,13 +639,11 @@ projectRouter.put("/project/:projectId", (req, res) => __awaiter(void 0, void 0,
             }
         }
         // Actualizar imágenes sin modificar la relación
-        // Obtener la imagen actual del proyecto
         const existingImage = yield db
             .select({ imageId: projectImages.imageId })
             .from(projectImages)
             .where(eq(projectImages.projectId, projectId))
             .limit(1);
-        // Convertir requestImages en un objeto (si es un array, tomar el primero)
         if ((requestImages === null || requestImages === void 0 ? void 0 : requestImages.url) && (requestImages === null || requestImages === void 0 ? void 0 : requestImages.publicId)) {
             const imageId = (_a = existingImage[0]) === null || _a === void 0 ? void 0 : _a.imageId;
             if (imageId !== null && imageId !== undefined) {
@@ -623,8 +661,7 @@ projectRouter.put("/project/:projectId", (req, res) => __awaiter(void 0, void 0,
                 .from(projectMembers)
                 .where(eq(projectMembers.projectId, projectId)))
                 .map((m) => m.memberId)
-                .filter((id) => id !== null) // Filtramos nulls
-            );
+                .filter((id) => id !== null));
             const newMemberIds = new Set(requestMembers.map(Number).filter((id) => !isNaN(id)));
             // Miembros a eliminar
             const membersToRemove = [...currentMemberIds].filter((id) => !newMemberIds.has(id));
@@ -644,21 +681,16 @@ projectRouter.put("/project/:projectId", (req, res) => __awaiter(void 0, void 0,
                 const existingInvitations = new Set((yield db
                     .select({ userId: notifications.userId })
                     .from(notifications)
-                    .where(and(eq(notifications.entityId, projectId), // Mismo proyecto
-                eq(notifications.type, "project_invite"), // Mismo tipo de notificación
-                eq(notifications.status, "pending"), // No ha sido aceptada/rechazada
-                inArray(notifications.userId, memberRecords.map((m) => m.userId) // Usuarios que queremos invitar
-                )))).map((n) => n.userId) // Guardamos los userId con invitación pendiente
-                );
+                    .where(and(eq(notifications.entityId, projectId), eq(notifications.type, "project_invite"), eq(notifications.status, "pending"), inArray(notifications.userId, memberRecords.map((m) => m.userId))))).map((n) => n.userId));
                 // Filtrar solo los que NO tienen invitación pendiente
                 const notificationsToInsert = memberRecords
                     .filter((member) => !existingInvitations.has(member.userId))
                     .map((member) => ({
                     userId: member.userId,
-                    senderId: existingProject[0].userId,
+                    senderId: projectOwnerId,
                     type: "project_invite",
                     entityId: projectId,
-                    message: `Te han invitado a unirte al proyecto \"${existingProject[0].title}\".`,
+                    message: `Te han invitado a unirte al proyecto \"${title}\".`,
                     status: "pending",
                 }));
                 // Insertar solo si hay nuevas invitaciones
@@ -680,6 +712,55 @@ projectRouter.delete("/project/:projectId", (req, res) => __awaiter(void 0, void
         const { RefreshToken } = req.cookies;
         if (!RefreshToken) {
             res.status(401).json({ error: "Acceso no autorizado" });
+            return;
+        }
+        // Obtener usuario autenticado desde la sesión
+        const session = yield db
+            .select({ userId: sessions.userId })
+            .from(sessions)
+            .where(eq(sessions.refreshToken, RefreshToken))
+            .limit(1)
+            .all();
+        if (session.length === 0) {
+            res.status(401).json({ error: "Sesión no válida" });
+            return;
+        }
+        const authenticatedUserId = session[0].userId;
+        // Obtener datos del usuario autenticado (rol y proyectos)
+        const userData = yield db
+            .select({ roleId: users.roleId })
+            .from(users)
+            .where(eq(users.id, authenticatedUserId))
+            .limit(1)
+            .all();
+        if (userData.length === 0) {
+            res.status(403).json({ error: "Usuario no encontrado" });
+            return;
+        }
+        const userRoleId = userData[0].roleId;
+        // Obtener datos del proyecto
+        const projectData = yield db
+            .select({ ownerId: projects.userId })
+            .from(projects)
+            .where(eq(projects.id, projectId))
+            .limit(1)
+            .all();
+        if (projectData.length === 0) {
+            res.status(404).json({ error: "Proyecto no encontrado" });
+            return;
+        }
+        const projectOwnerId = projectData[0].ownerId;
+        // Verificar si el usuario es dueño o tiene permisos
+        const allowedRoles = new Set(["Moderador", "Administrador"]);
+        const roleData = yield db
+            .select({ roleName: roles.name })
+            .from(roles)
+            .where(eq(roles.id, userRoleId))
+            .limit(1)
+            .all();
+        const userRoleName = roleData.length > 0 ? roleData[0].roleName : "";
+        if (authenticatedUserId !== projectOwnerId && !allowedRoles.has(userRoleName)) {
+            res.status(403).json({ error: "No tienes permisos para eliminar este proyecto" });
             return;
         }
         // 1. Eliminar imágenes asociadas al proyecto

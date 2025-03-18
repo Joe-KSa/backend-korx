@@ -45,20 +45,18 @@ interface Member {
   collaborationsCount: number;
 }
 
-
 export interface TagMemberEntry extends Tag {
   memberId: number | null;
 }
 
 export interface ImageMemberEntry {
-  avatar: Pick<Image, 'url' | 'publicId'>
-  banner: Pick<Image, 'url' | 'publicId'>
+  avatar: Pick<Image, "url" | "publicId">;
+  banner: Pick<Image, "url" | "publicId">;
 }
 
 export interface SoundMemberEntry extends sound {
   memberId: number;
 }
-
 
 // User
 export interface User {
@@ -68,7 +66,7 @@ export interface User {
   email: string;
   image: string;
   banner: string;
-  bannerColor: string
+  bannerColor: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,13 +79,13 @@ export interface project {
   repository: string | null;
   url: string | null;
   hidden: boolean;
-  createdAt: string
+  createdAt: string;
   updateAt: string;
   tags: Tag[];
-  creator: Pick<User, 'id', 'name', 'username', 'image'>;
+  creator: Pick<User, "id", "name", "username", "image">;
 }
 
-export type ProjectEntry = Omit<Project, 'createdAt', 'updatedAt'>
+export type ProjectEntry = Omit<Project, "createdAt", "updatedAt">;
 
 export interface ProjectMemberEntry {
   id: number;
@@ -102,7 +100,6 @@ export interface TagProjectEntry extends Tag {
 export interface ImageProjectEntry extends Omit<Image, "id"> {
   projectId: number | null;
 }
-
 
 export interface TopLevelCommentResponse {
   id: number;
@@ -121,3 +118,21 @@ export interface ReplyCommentResponse {
 }
 
 export type CommentResponse = TopLevelCommentResponse | ReplyCommentResponse;
+
+// Challenges
+export interface Challenges {
+  id: number;
+  title: string;
+  description: string | null;
+  difficulty: number | null;
+  createdAt: string;
+  disciplines: Tag[];
+  languages: Tag[];
+  hint: string | null;
+  creator: Pick<User, "id", "name", "username", "image">;
+}
+
+
+export interface Challenge extends Challenges {
+  language: Tag;
+}

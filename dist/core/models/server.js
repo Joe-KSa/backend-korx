@@ -20,6 +20,7 @@ import { soundRouter } from "../../api/sound/route.js";
 import { redisClient } from "../../config/redis.config.js";
 import { roleRouter } from "../../api/role/route.js";
 import { notificationRouter } from "../../api/notification/route.js";
+import { challengeRouter } from "../../api/challenge/route.js";
 export class Server {
     constructor() {
         Object.defineProperty(this, "port", {
@@ -69,6 +70,7 @@ export class Server {
         this.app.use("/api", tagsRouter);
         this.app.use("/api", uploadRouter);
         this.app.use("/api", soundRouter);
+        this.app.use("/api", challengeRouter);
         this.app.use(authRouter);
     }
     listen() {

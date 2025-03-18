@@ -18,6 +18,7 @@ import {
   notifications,
   memberTags,
   projectLikes,
+  sessions
 } from "../../db/schema.js";
 import { eq, inArray, and, SQL, sql, asc, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -240,7 +241,8 @@ projectRouter.get(
         )
         .leftJoin(memberSounds, eq(members.id, memberSounds.memberId))
         .leftJoin(sounds, eq(memberSounds.soundId, sounds.id))
-        .where(eq(projects.id, projectId));
+        .where(eq(projects.id, projectId))
+        .orderBy(roles.priority);
 
       if (!rawData.length) {
         res.status(404).json({ error: "Proyecto no encontrado" });
@@ -681,25 +683,74 @@ projectRouter.put(
       } = req.body;
 
       if (!RefreshToken) {
-        res.status(401).json({ error: "Unauthorized access" });
+        res.status(401).json({ error: "Acceso no autorizado" });
         return;
       }
 
-      // Obtener el proyecto actual
-      const existingProject = await db
-        .select()
+      // Obtener usuario autenticado desde la sesión
+      const session = await db
+        .select({ userId: sessions.userId })
+        .from(sessions)
+        .where(eq(sessions.refreshToken, RefreshToken))
+        .limit(1)
+        .all();
+
+      if (session.length === 0) {
+        res.status(401).json({ error: "Sesión no válida" });
+        return;
+      }
+
+      const authenticatedUserId = session[0].userId;
+
+      // Obtener datos del usuario autenticado (rol y proyectos)
+      const userData = await db
+        .select({ roleId: users.roleId })
+        .from(users)
+        .where(eq(users.id, authenticatedUserId as string))
+        .limit(1)
+        .all();
+
+      if (userData.length === 0) {
+        res.status(403).json({ error: "Usuario no encontrado" });
+        return;
+      }
+
+      const userRoleId = userData[0].roleId;
+
+      // Obtener datos del proyecto
+      const projectData = await db
+        .select({ ownerId: projects.userId })
         .from(projects)
         .where(eq(projects.id, projectId))
-        .limit(1);
+        .limit(1)
+        .all();
 
-      if (!existingProject.length) {
+      if (projectData.length === 0) {
         res.status(404).json({ error: "Proyecto no encontrado" });
+        return;
+      }
+
+      const projectOwnerId = projectData[0].ownerId;
+
+      // Verificar si el usuario es dueño o tiene permisos
+      const allowedRoles = new Set(["Moderador", "Administrador"]);
+      const roleData = await db
+        .select({ roleName: roles.name })
+        .from(roles)
+        .where(eq(roles.id, userRoleId))
+        .limit(1)
+        .all();
+
+      const userRoleName = roleData.length > 0 ? roleData[0].roleName : "";
+
+      if (authenticatedUserId !== projectOwnerId && !allowedRoles.has(userRoleName)) {
+        res.status(403).json({ error: "No tienes permisos para editar este proyecto" });
         return;
       }
 
       // Construir objeto de actualización evitando sobreescribir todos los valores
       const updatedFields: Partial<typeof projects.$inferSelect> = {
-        hidden: true, // Ocultar proyecto para revision
+        hidden: true, // Ocultar proyecto para revisión
       };
       if (title) updatedFields.title = title;
       if (description) updatedFields.description = description;
@@ -732,14 +783,11 @@ projectRouter.put(
       }
 
       // Actualizar imágenes sin modificar la relación
-      // Obtener la imagen actual del proyecto
       const existingImage = await db
         .select({ imageId: projectImages.imageId })
         .from(projectImages)
         .where(eq(projectImages.projectId, projectId))
         .limit(1);
-
-      // Convertir requestImages en un objeto (si es un array, tomar el primero)
 
       if (requestImages?.url && requestImages?.publicId) {
         const imageId = existingImage[0]?.imageId;
@@ -763,7 +811,7 @@ projectRouter.put(
               .where(eq(projectMembers.projectId, projectId))
           )
             .map((m) => m.memberId)
-            .filter((id): id is number => id !== null) // Filtramos nulls
+            .filter((id): id is number => id !== null)
         );
         const newMemberIds = new Set(
           requestMembers.map(Number).filter((id): id is number => !isNaN(id))
@@ -778,6 +826,7 @@ projectRouter.put(
             .delete(projectMembers)
             .where(inArray(projectMembers.memberId, membersToRemove));
         }
+
         // Miembros a agregar
         const membersToAdd = [...newMemberIds].filter(
           (id) => !currentMemberIds.has(id)
@@ -796,16 +845,16 @@ projectRouter.put(
                 .from(notifications)
                 .where(
                   and(
-                    eq(notifications.entityId, projectId), // Mismo proyecto
-                    eq(notifications.type, "project_invite"), // Mismo tipo de notificación
-                    eq(notifications.status, "pending"), // No ha sido aceptada/rechazada
+                    eq(notifications.entityId, projectId),
+                    eq(notifications.type, "project_invite"),
+                    eq(notifications.status, "pending"),
                     inArray(
                       notifications.userId,
-                      memberRecords.map((m) => m.userId) // Usuarios que queremos invitar
+                      memberRecords.map((m) => m.userId)
                     )
                   )
                 )
-            ).map((n) => n.userId) // Guardamos los userId con invitación pendiente
+            ).map((n) => n.userId)
           );
 
           // Filtrar solo los que NO tienen invitación pendiente
@@ -813,10 +862,10 @@ projectRouter.put(
             .filter((member) => !existingInvitations.has(member.userId))
             .map((member) => ({
               userId: member.userId,
-              senderId: existingProject[0].userId,
+              senderId: projectOwnerId,
               type: "project_invite",
               entityId: projectId,
-              message: `Te han invitado a unirte al proyecto \"${existingProject[0].title}\".`,
+              message: `Te han invitado a unirte al proyecto \"${title}\".`,
               status: "pending",
             }));
 
@@ -835,6 +884,7 @@ projectRouter.put(
   }
 );
 
+
 projectRouter.delete(
   "/project/:projectId",
   async (req: Request, res: Response) => {
@@ -844,6 +894,67 @@ projectRouter.delete(
 
       if (!RefreshToken) {
         res.status(401).json({ error: "Acceso no autorizado" });
+        return;
+      }
+
+      // Obtener usuario autenticado desde la sesión
+      const session = await db
+        .select({ userId: sessions.userId })
+        .from(sessions)
+        .where(eq(sessions.refreshToken, RefreshToken))
+        .limit(1)
+        .all();
+
+      if (session.length === 0) {
+        res.status(401).json({ error: "Sesión no válida" });
+        return;
+      }
+
+      const authenticatedUserId = session[0].userId;
+
+      // Obtener datos del usuario autenticado (rol y proyectos)
+      const userData = await db
+        .select({ roleId: users.roleId })
+        .from(users)
+        .where(eq(users.id, authenticatedUserId as string))
+        .limit(1)
+        .all();
+
+      if (userData.length === 0) {
+        res.status(403).json({ error: "Usuario no encontrado" });
+        return;
+      }
+
+      const userRoleId = userData[0].roleId;
+
+      // Obtener datos del proyecto
+      const projectData = await db
+        .select({ ownerId: projects.userId })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1)
+        .all();
+
+      if (projectData.length === 0) {
+        res.status(404).json({ error: "Proyecto no encontrado" });
+        return;
+      }
+
+      const projectOwnerId = projectData[0].ownerId;
+
+      // Verificar si el usuario es dueño o tiene permisos
+      const allowedRoles = new Set(["Moderador", "Administrador"]);
+      const roleData = await db
+        .select({ roleName: roles.name })
+        .from(roles)
+        .where(eq(roles.id, userRoleId))
+        .limit(1)
+        .all();
+
+      const userRoleName = roleData.length > 0 ? roleData[0].roleName : "";
+
+      if (authenticatedUserId !== projectOwnerId && !allowedRoles.has(userRoleName)) {
+        res.status(403).json({ error: "No tienes permisos para eliminar este proyecto" });
         return;
       }
 

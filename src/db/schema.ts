@@ -5,7 +5,7 @@ import {
   type AnySQLiteColumn,
   index,
   unique,
-  uniqueIndex
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
@@ -465,7 +465,6 @@ export const notifications = sqliteTable(
   })
 );
 
-
 // Tabla de disciplinas
 export const disciplines = sqliteTable(
   "disciplines",
@@ -479,36 +478,38 @@ export const disciplines = sqliteTable(
 );
 
 // Tabla de retos (challenges)
-export const challenges = sqliteTable(
-  "challenges",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    name: text("name", { length: 75 }).default("").notNull(),
-    creatorId: text("creator_id")
-      .notNull()
-      .references((): AnySQLiteColumn => users.id, { onDelete: "cascade" }),
-    description: text("description").default(""),
-    difficulty: integer("difficulty").default(1),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
-      .$onUpdate(() => sql`CURRENT_TIMESTAMP`),
-  }
-);
+export const challenges = sqliteTable("challenges", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name", { length: 75 }).default("").notNull(),
+  creatorId: text("creator_id")
+    .notNull()
+    .references((): AnySQLiteColumn => users.id, { onDelete: "cascade" }),
+  description: text("description").default(""),
+  difficulty: integer("difficulty").default(1),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`)
+    .$onUpdate(() => sql`CURRENT_TIMESTAMP`),
+});
 
 // Tabla intermedia para relacionar retos con disciplinas
 export const challengeDisciplines = sqliteTable(
   "challenge_disciplines",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    challengeId: integer("challenge_id").references(() => challenges.id),
+    challengeId: integer("challenge_id").references(() => challenges.id, {
+      onDelete: "cascade",
+    }), // Agregar cascade
     disciplineId: integer("discipline_id").references(() => disciplines.id),
   },
   (table) => ({
-    uniquePair: uniqueIndex("uq_challenge_discipline").on(table.challengeId, table.disciplineId),
+    uniquePair: uniqueIndex("uq_challenge_discipline").on(
+      table.challengeId,
+      table.disciplineId
+    ),
   })
 );
 
@@ -517,26 +518,30 @@ export const challengeLanguages = sqliteTable(
   "challenge_languages",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    challengeId: integer("challenge_id").references(() => challenges.id),
+    challengeId: integer("challenge_id").references(() => challenges.id, {
+      onDelete: "cascade",
+    }), // Agregar cascade
     languageId: integer("language_id").references(() => tags.id),
-    editorHints: text("editor_hints"), // JSON con las sugerencias del editor
+    editorHints: text("editor_hints"),
   },
   (table) => ({
-    uniquePair: uniqueIndex("uq_challenge_language").on(table.challengeId, table.languageId),
+    uniquePair: uniqueIndex("uq_challenge_language").on(
+      table.challengeId,
+      table.languageId
+    ),
   })
 );
 
 // Tabla de soluciones
-export const solutions = sqliteTable(
-  "solutions",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    challengeId: integer("challenge_id").references(() => challenges.id),
-    userId: integer("user_id").notNull(), // Asumiendo que tendrás una tabla de usuarios
-    languageId: integer("language_id").references(() => tags.id),
-    code: text("code").notNull(),
-    createdAt: text("submitted_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-  }
-);
+export const solutions = sqliteTable("solutions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  challengeId: integer("challenge_id").notNull().references(() => challenges.id),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  languageId: integer("language_id").references(() => tags.id),
+  code: text("code").notNull(),
+  createdAt: text("submitted_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+});

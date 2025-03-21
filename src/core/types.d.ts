@@ -136,3 +136,14 @@ export interface Challenges {
 export interface Challenge extends Challenges {
   language: Tag;
 }
+
+// Soltuions
+
+export interface Solution {
+  id: number;
+  challengeId: number | null;
+  creator: Pick<User, "id", "name", "username", "image">;
+  code: string;
+  language: Tag;
+}
+

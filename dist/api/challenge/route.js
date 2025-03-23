@@ -10,7 +10,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import express from "express";
 import { db } from "../../db/index.js";
 import { challenges, tags, challengeLanguages, disciplines, challengeDisciplines, users, members, images, memberImages, roles, sessions, solutions, } from "../../db/schema.js";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, desc } from "drizzle-orm";
 import checkAuth from "../../middleware/checkAuth.js";
 export const challengeRouter = express.Router();
 const languageMap = {
@@ -43,7 +43,8 @@ challengeRouter.get("/challenge", (_req, res) => __awaiter(void 0, void 0, void 
             .leftJoin(users, eq(challenges.creatorId, users.id))
             .leftJoin(members, eq(users.id, members.userId))
             .leftJoin(memberImages, eq(members.id, memberImages.memberId))
-            .leftJoin(images, and(eq(memberImages.imageId, images.id), eq(memberImages.type, "avatar")));
+            .leftJoin(images, and(eq(memberImages.imageId, images.id), eq(memberImages.type, "avatar")))
+            .orderBy(desc(challenges.createdAt));
         if (!rawData.length) {
             res.status(200).json([]);
             return;
@@ -314,7 +315,7 @@ challengeRouter.put("/challenge/:id", (req, res) => __awaiter(void 0, void 0, vo
         const { title, description, difficulty, disciplines, languageId, hint } = req.body;
         const updateData = {};
         if (title)
-            updateData.title = title;
+            updateData.name = title;
         if (description)
             updateData.description = description;
         if (difficulty)
@@ -336,9 +337,8 @@ challengeRouter.put("/challenge/:id", (req, res) => __awaiter(void 0, void 0, vo
             if (newDisciplines.length > 0)
                 yield db.insert(challengeDisciplines).values(newDisciplines);
         }
-        // Lógica para manejar el lenguaje (languageId) y el hint asociado
+        // Manejo del lenguaje (languageId) y el hint asociado
         if (languageId) {
-            // 1. Comprobar si ya existe una relación para ese reto y lenguaje
             const existingRelation = yield db
                 .select()
                 .from(challengeLanguages)
@@ -346,14 +346,12 @@ challengeRouter.put("/challenge/:id", (req, res) => __awaiter(void 0, void 0, vo
                 .limit(1)
                 .all();
             if (existingRelation.length > 0) {
-                // Si la relación existe, se actualiza el hint
                 yield db
                     .update(challengeLanguages)
                     .set({ editorHints: hint })
                     .where(eq(challengeLanguages.id, existingRelation[0].id));
             }
             else {
-                // Si no existe, se verifica que el lenguaje exista en la tabla de tags
                 const languageExists = yield db
                     .select()
                     .from(tags)
@@ -361,7 +359,6 @@ challengeRouter.put("/challenge/:id", (req, res) => __awaiter(void 0, void 0, vo
                     .limit(1)
                     .all();
                 if (languageExists.length > 0) {
-                    // Se crea una nueva relación
                     yield db.insert(challengeLanguages).values({
                         challengeId,
                         languageId,
@@ -369,15 +366,34 @@ challengeRouter.put("/challenge/:id", (req, res) => __awaiter(void 0, void 0, vo
                     });
                 }
                 else {
-                    // Si el lenguaje no existe en tags, se responde con un error
                     res.status(400).json({ error: "El lenguaje especificado no existe" });
                     return;
                 }
             }
         }
-        res.status(201).json({
+        // 🔹 Obtener el título actualizado
+        const updatedChallenge = yield db
+            .select()
+            .from(challenges)
+            .where(eq(challenges.id, challengeId))
+            .limit(1)
+            .all();
+        const updatedTitle = updatedChallenge[0].name;
+        // 🔹 Obtener los lenguajes actualizados
+        const updatedLanguages = yield db
+            .select({
+            id: tags.id,
+            name: tags.name,
+        })
+            .from(challengeLanguages)
+            .innerJoin(tags, eq(challengeLanguages.languageId, tags.id))
+            .where(eq(challengeLanguages.challengeId, challengeId))
+            .all();
+        res.status(200).json({
             message: "Reto actualizado correctamente",
             id: challengeId,
+            title: updatedTitle,
+            languages: updatedLanguages,
         });
     }
     catch (error) {
@@ -392,18 +408,13 @@ challengeRouter.post("/challenge", (req, res) => __awaiter(void 0, void 0, void 
             res.status(401).json({ error: "Acceso no autorizado" });
             return;
         }
-        // Extraer los campos necesarios del cuerpo de la petición
-        const { creator, title, description, difficulty, disciplines, // Opcional: array de disciplineId (números)
-        languageId, // Opcional: id del lenguaje (número)
-        hint, // Opcional: editorHints para el lenguaje
-         } = req.body;
-        // Verificar que se envíe el creator y su id
+        const { creator, title, description, difficulty, disciplines, languageId, hint, } = req.body;
         if (!creator || !creator.id) {
             res.status(400).json({ error: "Creator no proporcionado" });
             return;
         }
         const userId = creator.id;
-        // Insertar el reto en la tabla challenges
+        // Insertar reto en la tabla challenges
         const insertedChallenges = yield db
             .insert(challenges)
             .values({
@@ -412,10 +423,13 @@ challengeRouter.post("/challenge", (req, res) => __awaiter(void 0, void 0, void 
             description: description || "",
             difficulty: difficulty || 1,
         })
-            .returning(); // Se asume que retorna el reto insertado
-        // Obtener el id del reto recién insertado
+            .returning();
+        if (!insertedChallenges.length) {
+            res.status(500).json({ error: "No se pudo crear el reto" });
+            return;
+        }
         const challengeId = insertedChallenges[0].id;
-        // Insertar las disciplinas si se envían
+        // Insertar disciplinas si existen
         if (Array.isArray(disciplines) && disciplines.length > 0) {
             const newDisciplines = disciplines.map((disciplineId) => ({
                 challengeId,
@@ -423,9 +437,9 @@ challengeRouter.post("/challenge", (req, res) => __awaiter(void 0, void 0, void 
             }));
             yield db.insert(challengeDisciplines).values(newDisciplines);
         }
-        // Insertar el lenguaje asociado si se envía languageId
+        let languages = [];
+        // Insertar lenguaje asociado si se envía languageId
         if (languageId) {
-            // Validar que el lenguaje exista en la tabla tags
             const languageExists = yield db
                 .select()
                 .from(tags)
@@ -441,15 +455,19 @@ challengeRouter.post("/challenge", (req, res) => __awaiter(void 0, void 0, void 
                 languageId,
                 editorHints: hint || "",
             });
+            languages = [{ id: languageId, name: languageExists[0].name }];
         }
         res.status(201).json({
             message: "Reto creado correctamente",
             id: challengeId,
+            title,
+            languages,
         });
     }
     catch (error) {
         console.error("Error al crear el reto:", error);
         res.status(500).json({ error: "Error al crear el reto" });
+        return;
     }
 }));
 challengeRouter.delete("/challenge/:id", checkAuth, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -668,6 +686,7 @@ challengeRouter.get("/challenge/:id/solutions/:language", (req, res) => __awaite
             .leftJoin(memberImages, eq(members.id, memberImages.memberId))
             .leftJoin(images, and(eq(memberImages.imageId, images.id), eq(memberImages.type, "avatar")))
             .where(and(eq(solutions.challengeId, challengeId), eq(solutions.languageId, tagId)))
+            .orderBy(desc(solutions.createdAt))
             .all();
         // Mapeamos las soluciones (en este ejemplo se asume que puede haber más de una)
         const solutionsMap = new Map();

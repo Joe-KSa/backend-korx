@@ -16,7 +16,7 @@ import {
   solutions,
 } from "../../db/schema.js";
 
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, desc } from "drizzle-orm";
 import { Challenge, Challenges, Solution, Tag } from "../../core/types.js";
 import checkAuth from "../../middleware/checkAuth.js";
 
@@ -68,7 +68,8 @@ challengeRouter.get("/challenge", async (_req: Request, res: Response) => {
           eq(memberImages.imageId, images.id),
           eq(memberImages.type, "avatar")
         )
-      );
+      )
+      .orderBy(desc(challenges.createdAt));
 
     if (!rawData.length) {
       res.status(200).json([]);
@@ -430,7 +431,7 @@ challengeRouter.put("/challenge/:id", async (req: Request, res: Response) => {
       req.body;
 
     const updateData: Record<string, any> = {};
-    if (title) updateData.title = title;
+    if (title) updateData.name = title;
     if (description) updateData.description = description;
     if (difficulty) updateData.difficulty = difficulty;
 
@@ -453,9 +454,8 @@ challengeRouter.put("/challenge/:id", async (req: Request, res: Response) => {
         await db.insert(challengeDisciplines).values(newDisciplines);
     }
 
-    // Lógica para manejar el lenguaje (languageId) y el hint asociado
+    // Manejo del lenguaje (languageId) y el hint asociado
     if (languageId) {
-      // 1. Comprobar si ya existe una relación para ese reto y lenguaje
       const existingRelation = await db
         .select()
         .from(challengeLanguages)
@@ -469,13 +469,11 @@ challengeRouter.put("/challenge/:id", async (req: Request, res: Response) => {
         .all();
 
       if (existingRelation.length > 0) {
-        // Si la relación existe, se actualiza el hint
         await db
           .update(challengeLanguages)
           .set({ editorHints: hint })
           .where(eq(challengeLanguages.id, existingRelation[0].id));
       } else {
-        // Si no existe, se verifica que el lenguaje exista en la tabla de tags
         const languageExists = await db
           .select()
           .from(tags)
@@ -484,29 +482,51 @@ challengeRouter.put("/challenge/:id", async (req: Request, res: Response) => {
           .all();
 
         if (languageExists.length > 0) {
-          // Se crea una nueva relación
           await db.insert(challengeLanguages).values({
             challengeId,
             languageId,
             editorHints: hint,
           });
         } else {
-          // Si el lenguaje no existe en tags, se responde con un error
           res.status(400).json({ error: "El lenguaje especificado no existe" });
           return;
         }
       }
     }
 
-    res.status(201).json({
+    // 🔹 Obtener el título actualizado
+    const updatedChallenge = await db
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, challengeId))
+      .limit(1)
+      .all();
+
+    const updatedTitle = updatedChallenge[0].name;
+
+    // 🔹 Obtener los lenguajes actualizados
+    const updatedLanguages = await db
+      .select({
+        id: tags.id,
+        name: tags.name,
+      })
+      .from(challengeLanguages)
+      .innerJoin(tags, eq(challengeLanguages.languageId, tags.id))
+      .where(eq(challengeLanguages.challengeId, challengeId))
+      .all();
+
+    res.status(200).json({
       message: "Reto actualizado correctamente",
       id: challengeId,
+      title: updatedTitle,
+      languages: updatedLanguages,
     });
   } catch (error) {
     console.error("Error al actualizar el reto:", error);
     res.status(500).json({ error: "Error al actualizar el reto" });
   }
 });
+
 
 challengeRouter.post("/challenge", async (req: Request, res: Response) => {
   try {
@@ -516,25 +536,24 @@ challengeRouter.post("/challenge", async (req: Request, res: Response) => {
       return;
     }
 
-    // Extraer los campos necesarios del cuerpo de la petición
     const {
       creator,
       title,
       description,
       difficulty,
-      disciplines, // Opcional: array de disciplineId (números)
-      languageId, // Opcional: id del lenguaje (número)
-      hint, // Opcional: editorHints para el lenguaje
+      disciplines,
+      languageId,
+      hint,
     } = req.body;
 
-    // Verificar que se envíe el creator y su id
     if (!creator || !creator.id) {
       res.status(400).json({ error: "Creator no proporcionado" });
       return;
     }
+
     const userId = creator.id;
 
-    // Insertar el reto en la tabla challenges
+    // Insertar reto en la tabla challenges
     const insertedChallenges = await db
       .insert(challenges)
       .values({
@@ -543,12 +562,16 @@ challengeRouter.post("/challenge", async (req: Request, res: Response) => {
         description: description || "",
         difficulty: difficulty || 1,
       })
-      .returning(); // Se asume que retorna el reto insertado
+      .returning();
 
-    // Obtener el id del reto recién insertado
+    if (!insertedChallenges.length) {
+      res.status(500).json({ error: "No se pudo crear el reto" });
+      return;
+    }
+
     const challengeId = insertedChallenges[0].id;
 
-    // Insertar las disciplinas si se envían
+    // Insertar disciplinas si existen
     if (Array.isArray(disciplines) && disciplines.length > 0) {
       const newDisciplines = disciplines.map((disciplineId: number) => ({
         challengeId,
@@ -557,9 +580,9 @@ challengeRouter.post("/challenge", async (req: Request, res: Response) => {
       await db.insert(challengeDisciplines).values(newDisciplines);
     }
 
-    // Insertar el lenguaje asociado si se envía languageId
+    let languages : Tag[] = [];
+    // Insertar lenguaje asociado si se envía languageId
     if (languageId) {
-      // Validar que el lenguaje exista en la tabla tags
       const languageExists = await db
         .select()
         .from(tags)
@@ -577,17 +600,24 @@ challengeRouter.post("/challenge", async (req: Request, res: Response) => {
         languageId,
         editorHints: hint || "",
       });
+
+      languages = [{ id: languageId, name: languageExists[0].name }];
     }
 
     res.status(201).json({
       message: "Reto creado correctamente",
       id: challengeId,
+      title,
+      languages,
     });
+
   } catch (error) {
     console.error("Error al crear el reto:", error);
     res.status(500).json({ error: "Error al crear el reto" });
+    return;
   }
 });
+
 
 challengeRouter.delete(
   "/challenge/:id",
@@ -873,6 +903,7 @@ challengeRouter.get(
             eq(solutions.languageId, tagId)
           )
         )
+        .orderBy(desc(solutions.createdAt))
         .all();
 
       // Mapeamos las soluciones (en este ejemplo se asume que puede haber más de una)

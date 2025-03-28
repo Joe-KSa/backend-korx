@@ -26,6 +26,9 @@ const languageMap: Record<string, string> = {
   javascript: "JavaScript",
   cpp: "C++",
   python: "Python",
+  go: "GO",
+  java: "Java",
+  csharp: "C#",
 };
 
 challengeRouter.get("/challenge", async (_req: Request, res: Response) => {

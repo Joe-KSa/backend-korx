@@ -17,6 +17,9 @@ const languageMap = {
     javascript: "JavaScript",
     cpp: "C++",
     python: "Python",
+    go: "GO",
+    java: "Java",
+    csharp: "C#",
 };
 challengeRouter.get("/challenge", (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {

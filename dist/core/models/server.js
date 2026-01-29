@@ -42,6 +42,18 @@ export class Server {
     }
     applyMiddlewares() {
         const allowedOrigin = process.env.FRONTEND_REDIRECT_URI;
+        // Middleware para asegurar que Redis esté conectado en cada petición (o usar un singleton)
+        this.app.use((_req, res, next) => __awaiter(this, void 0, void 0, function* () {
+            try {
+                if (!redisClient.isOpen) {
+                    yield redisClient.connect().catch(console.error);
+                }
+                next();
+            }
+            catch (error) {
+                res.status(500).send("Internal Server Error: Redis Connection");
+            }
+        }));
         this.app.use(cors({
             origin: allowedOrigin,
             credentials: true,
@@ -49,14 +61,6 @@ export class Server {
             allowedHeaders: ["Content-Type", "Authorization"],
             exposedHeaders: ["Set-Cookie"],
         }));
-        // Manejar preflight (OPTIONS) globalmente
-        this.app.options("*", (_req, res) => {
-            res.header("Access-Control-Allow-Origin", allowedOrigin);
-            res.header("Access-Control-Allow-Credentials", "true");
-            res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-            res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-            res.sendStatus(200);
-        });
         this.app.use(express.json({ limit: "7.5mb" })); // Aumenta el límite del body JSON
         this.app.use(express.urlencoded({ limit: "7.5mb", extended: true })); // Para datos de formularios grandes
         this.app.use(cookieParser()); // Habilita cookies

@@ -1,3 +1,6 @@
 import { Server } from "./core/models/server.js";
 const server = new Server();
-server.listen();
+export default server.app;
+if (process.env.NODE_ENV !== 'production') {
+    server.listen();
+}
